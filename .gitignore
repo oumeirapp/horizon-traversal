@@ -228,6 +228,10 @@ dist/
 dist-ssr/
 *.local
 
+# Frontend source (the legacy Python template ignores every lib/ directory)
+!src/lib/
+!src/lib/**
+
 # Prepared native libraries (verified and copied by scripts)
 src-tauri/resources/native/libpdfium.dylib
 src-tauri/binaries/ffmpeg-*

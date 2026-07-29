@@ -1,8 +1,10 @@
 pub mod collection;
+pub mod coordinator;
 pub mod discovery;
 pub mod files;
-mod fs_safety;
+pub(crate) mod fs_safety;
 pub mod images;
+pub mod ipc;
 pub mod native;
 pub mod pdf;
 pub mod selection;
