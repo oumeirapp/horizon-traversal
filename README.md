@@ -12,8 +12,13 @@ working Python fallback.
 
 ```bash
 npm install
+npm run prepare:pdfium
 npm run tauri dev
 ```
+
+`prepare:pdfium` downloads the pinned PDFium 151.0.7920.0 Apple Silicon
+library, verifies its checksums, and installs it into the Tauri bundle inputs.
+The current macOS bundle requires macOS 12 or newer.
 
 Build and test the frontend and Rust shell:
 

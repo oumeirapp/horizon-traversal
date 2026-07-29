@@ -73,3 +73,11 @@ pub struct TicketSelection {
     pub tickets: Vec<PathBuf>,
     pub notices: Vec<PipelineNotice>,
 }
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ProcessingOutcome {
+    pub processed: usize,
+    pub changed: usize,
+    pub failed_files: usize,
+    pub notices: Vec<PipelineNotice>,
+}

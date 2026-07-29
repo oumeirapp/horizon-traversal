@@ -227,3 +227,6 @@ node_modules/
 dist/
 dist-ssr/
 *.local
+
+# Prepared native libraries (verified and copied by scripts)
+src-tauri/resources/native/libpdfium.dylib
