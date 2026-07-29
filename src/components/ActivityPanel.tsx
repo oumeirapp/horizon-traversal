@@ -1,0 +1,240 @@
+import {
+  memo,
+  useDeferredValue,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type RefObject,
+} from "react";
+import type { RunLogEntry } from "../lib/run-state";
+
+type LogTab = "activity" | "warning" | "error";
+
+interface ActivityPanelProps {
+  logs: RunLogEntry[];
+  isExpanded: boolean;
+  onToggleExpanded: () => void;
+  toggleButtonRef: RefObject<HTMLButtonElement | null>;
+}
+
+const LOG_RENDER_LIMIT = 750;
+
+const timeFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
+
+function matchesTab(entry: RunLogEntry, tab: LogTab) {
+  return tab === "activity" || entry.level === tab;
+}
+
+function LogLevelMark({ level }: { level: RunLogEntry["level"] }) {
+  return (
+    <span className={`log-level log-level--${level}`} aria-label={level}>
+      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+        {level === "success" ? (
+          <path d="m3 8 3 3 7-7" />
+        ) : level === "warning" ? (
+          <><path d="M8 3v6" /><path d="M8 12h.01" /></>
+        ) : level === "error" ? (
+          <><path d="m4 4 8 8" /><path d="m12 4-8 8" /></>
+        ) : (
+          <circle cx="8" cy="8" r="1" />
+        )}
+      </svg>
+    </span>
+  );
+}
+
+function ActivityPanelComponent({
+  logs,
+  isExpanded,
+  onToggleExpanded,
+  toggleButtonRef,
+}: ActivityPanelProps) {
+  const [tab, setTab] = useState<LogTab>("activity");
+  const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase());
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const counts = useMemo(() => {
+    let warnings = 0;
+    let errors = 0;
+    for (const entry of logs) {
+      if (entry.level === "warning") warnings += 1;
+      if (entry.level === "error") errors += 1;
+    }
+    return { activity: logs.length, warning: warnings, error: errors };
+  }, [logs]);
+
+  const { groups, matchingCount } = useMemo(() => {
+    const matching: RunLogEntry[] = [];
+    for (const entry of logs) {
+      if (!matchesTab(entry, tab)) continue;
+      if (
+        deferredQuery !== "" &&
+        !`${entry.level} ${entry.ticket ?? "run"} ${entry.message} ${entry.path ?? ""}`
+          .toLocaleLowerCase()
+          .includes(deferredQuery)
+      ) {
+        continue;
+      }
+      matching.push(entry);
+    }
+
+    const grouped = new Map<string, RunLogEntry[]>();
+    for (const entry of matching.slice(-LOG_RENDER_LIMIT)) {
+      const key = entry.ticket ?? "Run";
+      const group = grouped.get(key);
+      if (group === undefined) grouped.set(key, [entry]);
+      else group.push(entry);
+    }
+    return { groups: [...grouped.entries()], matchingCount: matching.length };
+  }, [deferredQuery, logs, tab]);
+
+  const visibleCount = useMemo(
+    () => groups.reduce((total, [, entries]) => total + entries.length, 0),
+    [groups],
+  );
+
+  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    const tabs: LogTab[] = ["activity", "warning", "error"];
+    const current = tabs.indexOf(tab);
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? tabs.length - 1
+          : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) %
+            tabs.length;
+    setTab(tabs[nextIndex]);
+    tabRefs.current[nextIndex]?.focus();
+  }
+
+  return (
+    <section
+      className={`activity-panel${isExpanded ? " activity-panel--expanded" : ""}`}
+      aria-labelledby="activity-heading"
+    >
+      <div className="activity-panel__header">
+        <div>
+          <p className="section-kicker">Run record</p>
+          <h2 id="activity-heading">Activity</h2>
+        </div>
+        <div className="activity-panel__tools">
+          <label className="log-search">
+            <span className="sr-only">Search run activity</span>
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <circle cx="11" cy="11" r="6.5" />
+              <path d="m16 16 4 4" />
+            </svg>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search this run"
+            />
+          </label>
+          <button
+            ref={toggleButtonRef}
+            type="button"
+            className="icon-button"
+            onClick={onToggleExpanded}
+            aria-label={isExpanded ? "Collapse activity log" : "Expand activity log"}
+            aria-pressed={isExpanded}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              {isExpanded ? (
+                <path d="M9 4v5H4M15 20v-5h5M4 9l6-6M20 15l-6 6" />
+              ) : (
+                <path d="M9 4H4v5M15 20h5v-5M4 4l6 6M20 20l-6-6" />
+              )}
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div className="activity-tabs" role="tablist" aria-label="Log level">
+        {(["activity", "warning", "error"] as const).map((item, index) => (
+          <button
+            key={item}
+            ref={(node) => {
+              tabRefs.current[index] = node;
+            }}
+            type="button"
+            role="tab"
+            aria-selected={tab === item}
+            tabIndex={tab === item ? 0 : -1}
+            onClick={() => setTab(item)}
+            onKeyDown={handleTabKeyDown}
+          >
+            {item === "activity"
+              ? "Activity"
+              : item === "warning"
+                ? "Warnings"
+                : "Errors"}
+            <span>{counts[item].toLocaleString()}</span>
+          </button>
+        ))}
+        <p className="activity-tabs__limit" aria-live="polite">
+          {visibleCount.toLocaleString()} shown
+          {matchingCount > visibleCount ? ` · newest of ${matchingCount.toLocaleString()}` : ""}
+          {" · 10,000 retained"}
+        </p>
+      </div>
+
+      <div
+        className="log-viewport"
+        role="tabpanel"
+        aria-label={`${tab} log`}
+        tabIndex={0}
+      >
+        {groups.length === 0 ? (
+          <div className="log-empty">
+            <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
+              <path d="M5 10h22M5 16h14M5 22h18" />
+            </svg>
+            <p>
+              {logs.length === 0
+                ? "Run details will appear here as each asset moves."
+                : "No entries match this view."}
+            </p>
+          </div>
+        ) : (
+          groups.map(([ticket, entries]) => (
+            <section className="log-group" key={ticket}>
+              <header>
+                <h3>{ticket}</h3>
+                <span>{entries.length.toLocaleString()}</span>
+              </header>
+              <ol>
+                {entries.map((entry) => (
+                  <li className={`log-entry log-entry--${entry.level}`} key={entry.id}>
+                    <time dateTime={new Date(entry.timestampMs).toISOString()}>
+                      {timeFormatter.format(entry.timestampMs)}
+                    </time>
+                    <LogLevelMark level={entry.level} />
+                    <div>
+                      <p>{entry.message}</p>
+                      {entry.path === null ? null : (
+                        <code title={entry.path}>{entry.path}</code>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+export const ActivityPanel = memo(ActivityPanelComponent);
