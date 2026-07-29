@@ -30,8 +30,10 @@
     "targets": "all",
     "externalBin": ["binaries/ffmpeg", "binaries/ffprobe"],
     "resources": [
+      "native-assets.json",
       "binaries/THIRD_PARTY_NOTICES.md",
-      "binaries/licenses/GPL-2.0-or-later.txt"
+      "binaries/licenses/GPL-2.0-or-later.txt",
+      "resources/licenses/pdfium/**/*"
     ],
     "icon": [
       "icons/32x32.png",

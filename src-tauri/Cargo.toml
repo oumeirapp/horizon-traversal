@@ -14,6 +14,12 @@ edition = "2021"
 name = "x_traversal_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+# Enables the opt-in packaged application smoke harness. The harness remains
+# dormant unless X_TRAVERSAL_PACKAGED_SMOKE_REQUEST contains a JSON request.
+packaged-smoke = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

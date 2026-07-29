@@ -6,6 +6,8 @@ FFMPEG_VERSION="8.1.2"
 FFMPEG_ARCHIVE="ffmpeg-${FFMPEG_VERSION}.tar.xz"
 FFMPEG_URL="https://ffmpeg.org/releases/${FFMPEG_ARCHIVE}"
 FFMPEG_SHA256="464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c"
+FFMPEG_BINARY_SHA256="5286c307f258812bfae104bba18feccbfc825d6ecaec34d7c0ef672808e1feae"
+FFPROBE_BINARY_SHA256="2ac09b9bd09e0ed37b47df56c4e20cb031121af0cbeb31c086f262192db63e65"
 
 X264_REVISION="b35605ace3ddf7c1a5d67a2eb553f034aef41d55"
 X264_ARCHIVE="x264-${X264_REVISION}.tar.bz2"
@@ -14,6 +16,9 @@ X264_SHA256="6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224"
 
 TARGET_TRIPLE="aarch64-apple-darwin"
 MACOS_DEPLOYMENT_TARGET="12.0"
+EXPECTED_COMPILER="Apple clang version 21.0.0 (clang-2100.1.1.101)"
+EXPECTED_CLT_PACKAGE_VERSION="26.6.0.0.1781586589"
+EXPECTED_SDK_VERSION="26.5"
 # Timestamp carried by the FFmpeg 8.1.2 release archive (UTC).
 SOURCE_DATE_EPOCH="1781678760"
 
@@ -103,7 +108,7 @@ cleanup() {
 [ "$(uname -s)" = "Darwin" ] || fail "this builder supports macOS only"
 [ "$(uname -m)" = "arm64" ] || fail "this builder must run natively on Apple Silicon"
 
-for required in awk basename chmod clang curl grep install lipo make mkdir mktemp mv otool ranlib sed shasum strip sysctl tar xcrun; do
+for required in awk basename chmod clang curl grep install lipo make mkdir mktemp mv otool pkgutil ranlib sed shasum strip sysctl tar xcrun; do
   require_command "$required"
 done
 
@@ -139,6 +144,17 @@ CXX=$(xcrun --sdk macosx --find clang++)
 AR=$(xcrun --sdk macosx --find ar)
 RANLIB=$(xcrun --sdk macosx --find ranlib)
 STRIP=$(xcrun --sdk macosx --find strip)
+
+ACTUAL_COMPILER=$("$CC" --version | awk 'NR == 1 { print; exit }')
+[ "$ACTUAL_COMPILER" = "$EXPECTED_COMPILER" ] ||
+  fail "native release requires ${EXPECTED_COMPILER}; received ${ACTUAL_COMPILER}"
+ACTUAL_CLT_PACKAGE_VERSION=$(pkgutil --pkg-info=com.apple.pkg.CLTools_Executables |
+  awk -F ': ' '$1 == "version" { print $2; exit }')
+[ "$ACTUAL_CLT_PACKAGE_VERSION" = "$EXPECTED_CLT_PACKAGE_VERSION" ] ||
+  fail "native release requires Command Line Tools ${EXPECTED_CLT_PACKAGE_VERSION}; received ${ACTUAL_CLT_PACKAGE_VERSION}"
+ACTUAL_SDK_VERSION=$(xcrun --sdk macosx --show-sdk-version)
+[ "$ACTUAL_SDK_VERSION" = "$EXPECTED_SDK_VERSION" ] ||
+  fail "native release requires macOS SDK ${EXPECTED_SDK_VERSION}; received ${ACTUAL_SDK_VERSION}"
 
 export SDKROOT CC CXX AR RANLIB STRIP
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET"
@@ -278,6 +294,11 @@ for program in ffmpeg ffprobe; do
   "$STRIP" -x "$staged_binary"
   verify_binary "$staged_binary" "$program"
 done
+
+[ "$(sha256 "${STAGING_DIRECTORY}/ffmpeg-${TARGET_TRIPLE}")" = "$FFMPEG_BINARY_SHA256" ] ||
+  fail "reproducible FFmpeg checksum does not match the release manifest"
+[ "$(sha256 "${STAGING_DIRECTORY}/ffprobe-${TARGET_TRIPLE}")" = "$FFPROBE_BINARY_SHA256" ] ||
+  fail "reproducible FFprobe checksum does not match the release manifest"
 
 STAGED_FFMPEG="${STAGING_DIRECTORY}/ffmpeg-${TARGET_TRIPLE}"
 "$STAGED_FFMPEG" -hide_banner -encoders 2>/dev/null | grep -F libx264 >/dev/null ||

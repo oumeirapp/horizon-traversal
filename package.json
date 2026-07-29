@@ -2,13 +2,21 @@
   "name": "x-traversal",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "npm@11.9.0",
+  "engines": {
+    "node": ">=24.14.0 <25"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "prepare:ffmpeg": "./scripts/build-native-macos-arm64.sh",
     "prepare:pdfium": "node scripts/prepare-pdfium.mjs",
+    "prepare:source-offer": "node scripts/prepare-native-source-offer.mjs",
+    "verify:native": "node scripts/verify-native-assets.mjs",
+    "smoke:package": "sh scripts/smoke/build-and-run-macos-arm64.sh",
     "test": "vitest run",
+    "test:parity": "sh scripts/parity/run-macos-arm64.sh",
     "test:watch": "vitest",
     "preview": "vite preview",
     "tauri": "tauri"

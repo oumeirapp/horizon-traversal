@@ -1,0 +1,152 @@
+name: Quality and packaging
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: x-traversal-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend tests and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  macos-arm64-quality:
+    name: Rust, Python parity, and native assets
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Assert pinned Apple native toolchain
+        run: |
+          expected_compiler=$(node -p "require('./src-tauri/native-assets.json').targets['aarch64-apple-darwin'].mediaBuild.compiler")
+          expected_clt=$(node -p "require('./src-tauri/native-assets.json').targets['aarch64-apple-darwin'].mediaBuild.toolchainPackageVersion")
+          expected_sdk=$(node -p "require('./src-tauri/native-assets.json').targets['aarch64-apple-darwin'].mediaBuild.sdkVersion")
+          test "$(xcrun clang --version | head -n 1)" = "$expected_compiler"
+          test "$(pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | awk -F ': ' '$1 == \"version\" { print $2; exit }')" = "$expected_clt"
+          test "$(xcrun --sdk macosx --show-sdk-version)" = "$expected_sdk"
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.96.0
+          components: rustfmt, clippy
+          target: aarch64-apple-darwin
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.11.21
+          python-version: "3.14"
+          enable-cache: true
+      - run: npm ci
+      - name: Restore pinned native inputs
+        id: native-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/binaries/ffmpeg-aarch64-apple-darwin
+            src-tauri/binaries/ffprobe-aarch64-apple-darwin
+            src-tauri/resources/native/libpdfium.dylib
+          key: native-macos26-${{ runner.arch }}-${{ hashFiles('src-tauri/native-assets.json', 'scripts/build-native-macos-arm64.sh', 'scripts/prepare-pdfium.mjs') }}
+      - name: Prepare pinned native inputs
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: |
+          npm run prepare:pdfium
+          npm run prepare:ffmpeg
+      - run: npm run verify:native
+      - name: Test Python reference
+        working-directory: python
+        run: |
+          native_tools=$(mktemp -d)
+          ln -s "$GITHUB_WORKSPACE/src-tauri/binaries/ffmpeg-aarch64-apple-darwin" "$native_tools/ffmpeg"
+          ln -s "$GITHUB_WORKSPACE/src-tauri/binaries/ffprobe-aarch64-apple-darwin" "$native_tools/ffprobe"
+          export PATH="$native_tools:$PATH"
+          test "$(command -v ffmpeg)" = "$native_tools/ffmpeg"
+          test "$(command -v ffprobe)" = "$native_tools/ffprobe"
+          uv sync --locked --system-certs
+          uv run --locked --system-certs python -m unittest discover -s tests
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-features
+      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+      - name: Check release and parity shell scripts
+        run: find scripts -type f -name '*.sh' -exec sh -n {} +
+      - run: npm run test:parity
+
+  macos-arm64-package:
+    name: Packaged workflow smoke
+    if: github.event_name == 'workflow_dispatch'
+    needs: [frontend, macos-arm64-quality]
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Assert pinned Apple native toolchain
+        run: |
+          expected_compiler=$(node -p "require('./src-tauri/native-assets.json').targets['aarch64-apple-darwin'].mediaBuild.compiler")
+          expected_clt=$(node -p "require('./src-tauri/native-assets.json').targets['aarch64-apple-darwin'].mediaBuild.toolchainPackageVersion")
+          expected_sdk=$(node -p "require('./src-tauri/native-assets.json').targets['aarch64-apple-darwin'].mediaBuild.sdkVersion")
+          test "$(xcrun clang --version | head -n 1)" = "$expected_compiler"
+          test "$(pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | awk -F ': ' '$1 == \"version\" { print $2; exit }')" = "$expected_clt"
+          test "$(xcrun --sdk macosx --show-sdk-version)" = "$expected_sdk"
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.96.0
+          target: aarch64-apple-darwin
+      - run: npm ci
+      - name: Restore pinned native inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/binaries/ffmpeg-aarch64-apple-darwin
+            src-tauri/binaries/ffprobe-aarch64-apple-darwin
+            src-tauri/resources/native/libpdfium.dylib
+          key: native-macos26-${{ runner.arch }}-${{ hashFiles('src-tauri/native-assets.json', 'scripts/build-native-macos-arm64.sh', 'scripts/prepare-pdfium.mjs') }}
+          fail-on-cache-miss: true
+      - run: npm run verify:native
+      - name: Build and run packaged workflow smoke
+        run: npm run smoke:package
+        env:
+          X_TRAVERSAL_SMOKE_REPORT_PATH: ${{ github.workspace }}/dist/packaged-smoke-report.json
+      - run: npm run prepare:source-offer
+      - name: Verify corresponding-source archive
+        working-directory: dist/native-source-offer
+        run: shasum -a 256 -c SHA256SUMS
+      - name: Archive smoke bundle and corresponding source
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/X Traversal.app" \
+            "dist/X-Traversal-smoke-app.zip"
+          ditto -c -k --keepParent \
+            "dist/native-source-offer" \
+            "dist/X-Traversal-native-source.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x-traversal-packaged-smoke-not-for-release
+          path: |
+            dist/X-Traversal-smoke-app.zip
+            dist/X-Traversal-native-source.zip
+            dist/packaged-smoke-report.json
+          if-no-files-found: error
+          retention-days: 7
