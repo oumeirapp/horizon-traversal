@@ -221,3 +221,9 @@ __marimo__/
 
 all-tickets/
 output/
+
+# Tauri / Node
+node_modules/
+dist/
+dist-ssr/
+*.local
