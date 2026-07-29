@@ -7,3 +7,4 @@ pub mod native;
 pub mod pdf;
 pub mod selection;
 pub mod types;
+pub mod videos;

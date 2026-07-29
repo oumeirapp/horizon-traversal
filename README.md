@@ -13,12 +13,18 @@ working Python fallback.
 ```bash
 npm install
 npm run prepare:pdfium
+npm run prepare:ffmpeg
 npm run tauri dev
 ```
 
 `prepare:pdfium` downloads the pinned PDFium 151.0.7920.0 Apple Silicon
 library, verifies its checksums, and installs it into the Tauri bundle inputs.
 The current macOS bundle requires macOS 12 or newer.
+
+`prepare:ffmpeg` builds checksum-pinned FFmpeg 8.1.2 and x264 sources into
+standalone Apple Silicon sidecars. It can take several minutes on a clean
+machine. See [`src-tauri/binaries/README.md`](src-tauri/binaries/README.md) for
+build requirements and release licensing obligations.
 
 Build and test the frontend and Rust shell:
 

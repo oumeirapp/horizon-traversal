@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "prepare:ffmpeg": "./scripts/build-native-macos-arm64.sh",
     "prepare:pdfium": "node scripts/prepare-pdfium.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

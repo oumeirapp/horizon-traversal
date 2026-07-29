@@ -22,6 +22,7 @@ Use npm for the Tauri frontend and Cargo for Rust:
 ```bash
 npm install
 npm run prepare:pdfium
+npm run prepare:ffmpeg
 npm run tauri dev
 npm test
 cargo test --manifest-path src-tauri/Cargo.toml
