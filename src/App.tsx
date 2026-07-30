@@ -10,7 +10,6 @@ import {
   type MutableRefObject,
 } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import logo from "../src-tauri/icons/icon.png";
 import { ActivityPanel } from "./components/ActivityPanel";
 import {
   openLastOutput,
@@ -508,7 +507,7 @@ function App() {
     <main className={`app-shell${logsExpanded ? " app-shell--logs-expanded" : ""}`}>
       <header className="app-header">
         <div className="brand">
-          <img src={logo} width="42" height="42" alt="" />
+          <img src="/horizon%20traversal.png" width="42" height="42" alt="" />
           <div>
             <h1>X Traversal</h1>
             <p>Approved asset transfer</p>
