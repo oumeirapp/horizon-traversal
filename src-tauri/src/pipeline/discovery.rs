@@ -91,7 +91,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalization_matches_python_punctuation_rules() {
+    fn normalization_matches_legacy_punctuation_rules() {
         assert_eq!(
             normalize_folder_name("Master_Files (Final)"),
             "masterfilesfinal"

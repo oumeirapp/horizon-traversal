@@ -1,14 +1,35 @@
 # X Traversal
 
-X Traversal collects approved assets from ticket folders and optimizes PDFs,
-images, and videos for delivery.
+X Traversal is a Tauri desktop application that collects approved assets from
+ticket folders and prepares them for delivery. It discovers source folders,
+copies supported files into flat per-ticket outputs, converts PDFs, resizes
+images and videos, and writes a source-path report.
 
-The application is being migrated from Python/Tkinter to Tauri v2 with a
-React/TypeScript frontend and Rust processing backend. During the migration,
-the root contains the Tauri application and [`python/`](python/) contains the
-working Python fallback.
+The application has no Python or Node.js runtime dependency. React renders the
+desktop interface, while Rust owns validation, filesystem access, processing,
+run coordination, and native-tool execution.
 
-## Tauri development
+## Architecture
+
+The processing order is fixed and deterministic:
+
+1. Discover source folders
+2. Copy supported assets
+3. Convert PDFs
+4. Resize images
+5. Resize videos
+6. Generate the ticket report
+
+The React webview can call only three typed Rust commands: selection
+validation, pipeline execution with a scoped event channel, and opening the
+last Rust-stored output directory. It receives no shell, opener, or raw
+filesystem capability. Rust invokes only the bundled FFmpeg and FFprobe
+executables through Tauri's native shell API.
+
+## Setup
+
+The repository pins Node 24.14.0, npm 11.9.0, and Rust 1.96.0. On Apple
+Silicon macOS, prepare the checksum-pinned native inputs before development:
 
 ```bash
 npm ci
@@ -18,22 +39,18 @@ npm run verify:native
 npm run tauri dev
 ```
 
-`prepare:pdfium` downloads the pinned PDFium 151.0.7920.0 Apple Silicon
-library, verifies its checksums, and installs it into the Tauri bundle inputs.
-The current macOS bundle requires macOS 12 or newer.
+`prepare:pdfium` installs PDFium 151.0.7920.0. `prepare:ffmpeg` builds FFmpeg
+8.1.2 and the pinned x264 revision. Native release builds require the exact
+macOS 26 / Command Line Tools 26.6 / SDK 26.5 toolchain recorded in
+[`src-tauri/native-assets.json`](src-tauri/native-assets.json); preparation
+fails clearly if the toolchain or final hashes differ. The packaged app runs
+on macOS 12 or newer.
 
-`prepare:ffmpeg` builds checksum-pinned FFmpeg 8.1.2 and x264 sources into
-standalone Apple Silicon sidecars. It can take several minutes on a clean
-machine. See [`src-tauri/binaries/README.md`](src-tauri/binaries/README.md) for
-build requirements and release licensing obligations.
+The generated native binaries are intentionally not committed. Their source,
+target names, versions, output hashes, dependencies, and distribution files
+are validated by `npm run verify:native`.
 
-The reproducible Apple Silicon release inputs are pinned in
-[`src-tauri/native-assets.json`](src-tauri/native-assets.json). Native FFmpeg
-builds require macOS 26, Command Line Tools 26.6, the macOS 26.5 SDK, and the
-exact Apple Clang build recorded there. The preparation script stops before
-publishing artifacts if the toolchain or output checksums differ.
-
-Build and test the frontend and Rust shell:
+## Checks
 
 ```bash
 npm test
@@ -43,52 +60,47 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml --all-features
 cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 ```
 
-## Parity and packaging checks
-
-On Apple Silicon macOS, the opt-in parity suite runs the Python reference and
-the Rust coordinator over the same generated ticket tree:
-
-```bash
-npm run test:parity
-```
-
-The packaged smoke command builds an unsigned, test-enabled `.app`, verifies
-all copied native assets before signing, applies a local ad-hoc signature,
-verifies the signed bundle, and processes a PDF, oversized PNG, and portrait
-video with audio:
+The manual Apple Silicon package smoke builds a test-enabled `.app`, verifies
+native assets before signing, applies an ad-hoc local signature, validates the
+signed bundle, and processes PDF, image, and PCM-audio video fixtures:
 
 ```bash
 npm run smoke:package
 ```
 
-This is backend and bundle evidence, not a distributable release signature,
-notarization, Gatekeeper, or native-dialog test. The generated smoke app is
-explicitly non-release software because it contains the opt-in smoke harness.
+That smoke bundle is test evidence only. It is not a signed, notarized, or
+distributable release. Build the normal feature-off application with:
 
-FFmpeg and x264 are GPL-covered in this build. Prepare the complete
-corresponding-source package for every distributed release with:
+```bash
+npm run tauri build
+```
+
+Production publishing must use the project's distribution identity, hardened
+runtime/entitlements as applicable, notarization, and a Gatekeeper check.
+
+## Native licensing
+
+The FFmpeg/x264 configuration is GPL-covered. Every distributed application
+must include the bundled notices and make the complete corresponding source
+durably available beside the release:
 
 ```bash
 npm run prepare:source-offer
 (cd dist/native-source-offer && shasum -a 256 -c SHA256SUMS)
 ```
 
-Publish that source package in the same durable release location as the app.
-Temporary CI artifacts do not satisfy the long-term source-availability
-obligation. PDFium notices and its complete pinned wheel license set are
-bundled under `src-tauri/resources/licenses/pdfium/`.
+An expiring CI artifact is not a durable source offer. PDFium notices and the
+complete pinned wheel license set are bundled under
+`src-tauri/resources/licenses/pdfium/`.
 
-CI keeps frontend checks platform-neutral and runs native/parity checks on the
-pinned macOS 26 Apple Silicon image. The full package smoke is a manual,
-target-specific job.
+## Project structure
 
-## Python fallback
-
-```bash
-cd python
-uv sync --system-certs
-uv run --locked --system-certs app.py
+```text
+src/                         React/TypeScript interface and tests
+src-tauri/src/               Tauri commands and Rust processing pipeline
+src-tauri/binaries/          FFmpeg notices and prepared external binaries
+src-tauri/resources/         PDFium input and native license resources
+src-tauri/tests/             Rust integration tests and fixtures
+scripts/                     Native preparation, verification, and smoke tools
+.github/workflows/ci.yml     Frontend, Rust, native, and package-smoke checks
 ```
-
-The Python fallback remains the behavioral reference until the final migration
-stage.

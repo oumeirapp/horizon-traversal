@@ -16,7 +16,6 @@
     "verify:native": "node scripts/verify-native-assets.mjs",
     "smoke:package": "sh scripts/smoke/build-and-run-macos-arm64.sh",
     "test": "vitest run",
-    "test:parity": "sh scripts/parity/run-macos-arm64.sh",
     "test:watch": "vitest",
     "preview": "vite preview",
     "tauri": "tauri"

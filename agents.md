@@ -2,22 +2,25 @@
 
 # X Traversal
 
-X Traversal is a local desktop application for collecting approved assets from
-ticket folders. The repository is migrating from Python/Tkinter to Tauri v2.
+X Traversal is a Tauri v2 desktop application for collecting approved assets
+from ticket folders. React/TypeScript owns presentation; Rust owns validation,
+filesystem traversal, media processing, reports, run state, and native tools.
 
-## Transitional structure
+## Technology and structure
 
-- `src/`: React and TypeScript presentation code.
-- `src-tauri/`: Rust processing and Tauri desktop integration.
-- `python/`: working Python fallback and behavioral reference until cutover.
+- `src/`: React 19, TypeScript, Vite, ordinary CSS, and Vitest tests.
+- `src-tauri/src/`: Rust pipeline and the narrow Tauri command boundary.
+- `src-tauri/tests/`: Rust unit/integration fixtures.
+- `scripts/`: native preparation, checksum, bundle inspection, and smoke tools.
+- Node 24.14.0 with npm 11.9.0; Rust 1.96.0.
 
-UI code belongs in `src/`. Filesystem traversal and media processing belong in
-Rust under `src-tauri/src/`. Do not access the filesystem or spawn programs from
-the React webview.
+Do not add Python or Node sidecars. Do not access the filesystem or spawn
+programs from the React webview.
 
-## Package management
+## Package management and commands
 
-Use npm for the Tauri frontend and Cargo for Rust:
+Use npm for frontend/Tauri tooling and Cargo for Rust. Do not use pnpm, Yarn,
+or another JavaScript package manager.
 
 ```bash
 npm ci
@@ -26,39 +29,48 @@ npm run prepare:ffmpeg
 npm run verify:native
 npm run tauri dev
 npm test
+npm run build
 cargo test --locked --manifest-path src-tauri/Cargo.toml --all-features
 cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 ```
-
-The fallback remains an uv project. Always include `--system-certs` for uv
-dependency operations:
-
-```bash
-cd python
-uv sync --system-certs
-uv run --locked --system-certs app.py
-```
-
-Do not use pip, Poetry, pnpm, or Yarn.
 
 ## Architecture rules
 
 - Preserve the deterministic stage order: discover, copy, PDF, images, video,
   report.
-- Keep the ticket output structure flat and isolated per ticket.
-- Keep functions focused and avoid framework-like abstractions.
-- Preserve cross-platform behavior and Tauri packaging compatibility.
-- Register every Tauri command and grant only the capability it needs.
-- Keep `src-tauri/src/main.rs` as a thin call into `lib.rs`.
-- Do not expose shell, opener, or filesystem plugins directly to the webview.
-- Keep native source versions, toolchain identity, output hashes, licenses, and
-  bundle declarations synchronized through `src-tauri/native-assets.json` and
-  `npm run verify:native`.
+- Keep output flat and isolated per ticket; do not change collision naming or
+  report scope without an explicit requirement.
+- Keep `src-tauri/src/main.rs` thin and application setup in `lib.rs`.
+- Expose only focused, typed Tauri commands. Never grant shell, opener, or
+  filesystem plugin permissions to the webview.
+- Run blocking filesystem/media work outside the UI thread and keep ticket
+  failures isolated.
+- Skip symlinks and reject overlapping input/output paths.
+- Preserve cross-platform path handling even while macOS arm64 is the pinned
+  release target.
+
+## UI rules
+
+- Keep the navy/teal identity and six-stage route.
+- Preserve keyboard navigation, visible focus, accessible contrast, and
+  reduced-motion behavior.
+- Keep event ingestion batched and log rendering bounded; avoid rerender churn
+  in the activity panel.
+- Use native directory dialogs only through the existing narrow integration.
+
+## Native packaging
+
+- FFmpeg/FFprobe run only from Rust and remain suffix-free in `externalBin`.
+- Keep source pins, toolchain identity, output hashes, license resources, and
+  Tauri bundle declarations synchronized with `src-tauri/native-assets.json`.
+- Always run `npm run verify:native` before native tests or packaging.
+- Treat `npm run smoke:package` output as non-release test evidence.
+- A production release must be properly signed/notarized and must publish the
+  verified FFmpeg/x264 corresponding-source package in a durable location.
 
 ## Change discipline
 
-- Prefer small targeted changes and tests alongside each ported behavior.
-- Keep the Python fallback working until packaged parity is verified.
-- Do not commit generated native binaries or unrelated local workspace files.
-- Treat `npm run smoke:package` output as local smoke evidence, never as a
-  signed or notarized production release.
+- Prefer small targeted changes and tests alongside changed behavior.
+- Preserve unrelated worktree changes and stage explicit paths only.
+- Do not commit generated native binaries, build output, editor state, or
+  local agent files.

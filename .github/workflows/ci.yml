@@ -27,7 +27,7 @@ jobs:
       - run: npm run build
 
   macos-arm64-quality:
-    name: Rust, Python parity, and native assets
+    name: Rust and native assets
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -50,11 +50,6 @@ jobs:
           toolchain: 1.96.0
           components: rustfmt, clippy
           target: aarch64-apple-darwin
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: 0.11.21
-          python-version: "3.14"
-          enable-cache: true
       - run: npm ci
       - name: Restore pinned native inputs
         id: native-cache
@@ -71,23 +66,11 @@ jobs:
           npm run prepare:pdfium
           npm run prepare:ffmpeg
       - run: npm run verify:native
-      - name: Test Python reference
-        working-directory: python
-        run: |
-          native_tools=$(mktemp -d)
-          ln -s "$GITHUB_WORKSPACE/src-tauri/binaries/ffmpeg-aarch64-apple-darwin" "$native_tools/ffmpeg"
-          ln -s "$GITHUB_WORKSPACE/src-tauri/binaries/ffprobe-aarch64-apple-darwin" "$native_tools/ffprobe"
-          export PATH="$native_tools:$PATH"
-          test "$(command -v ffmpeg)" = "$native_tools/ffmpeg"
-          test "$(command -v ffprobe)" = "$native_tools/ffprobe"
-          uv sync --locked --system-certs
-          uv run --locked --system-certs python -m unittest discover -s tests
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-features
       - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
-      - name: Check release and parity shell scripts
+      - name: Check release shell scripts
         run: find scripts -type f -name '*.sh' -exec sh -n {} +
-      - run: npm run test:parity
 
   macos-arm64-package:
     name: Packaged workflow smoke

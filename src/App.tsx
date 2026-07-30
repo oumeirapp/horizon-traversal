@@ -69,11 +69,6 @@ function nativeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function leafName(path: string) {
-  const segments = path.split(/[\\/]/).filter(Boolean);
-  return segments[segments.length - 1] ?? path;
-}
-
 function formatDuration(milliseconds: number) {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000));
   const hours = Math.floor(seconds / 3600);
@@ -199,55 +194,6 @@ function FieldIssue({ issue }: { issue: ValidationIssue | undefined }) {
     <p className="field-message field-message--error" role="alert">
       {issue.message}
     </p>
-  );
-}
-
-function Manifest({
-  request,
-  summary,
-  validating,
-}: {
-  request: SelectionRequest;
-  summary: SelectionSummary | null;
-  validating: boolean;
-}) {
-  const tickets = summary?.tickets ?? [];
-  return (
-    <section className="manifest" aria-labelledby="manifest-heading">
-      <div className="section-heading">
-        <div>
-          <p className="section-kicker">Transfer manifest</p>
-          <h2 id="manifest-heading">Route preview</h2>
-        </div>
-        <span className="manifest__count">
-          {validating ? "Checking…" : `${tickets.length} ticket${tickets.length === 1 ? "" : "s"}`}
-        </span>
-      </div>
-      <div className="manifest__route">
-        <article className="manifest-stop">
-          <span>Source</span>
-          <strong>{request.inputPath === "" ? "Not selected" : leafName(request.inputPath)}</strong>
-          <code title={request.inputPath}>{request.inputPath || "Choose an input folder"}</code>
-        </article>
-        <div className="manifest-arrow"><ArrowIcon /></div>
-        <article className="manifest-stop manifest-stop--selection">
-          <span>Selection</span>
-          <strong>{summary?.valid ? `${tickets.length} matched` : "Awaiting route"}</strong>
-          <div className="ticket-preview" aria-label="Matched tickets">
-            {tickets.slice(0, 3).map((ticket) => (
-              <span key={ticket.path}>{ticket.name}</span>
-            ))}
-            {tickets.length > 3 ? <span>+{tickets.length - 3} more</span> : null}
-          </div>
-        </article>
-        <div className="manifest-arrow"><ArrowIcon /></div>
-        <article className="manifest-stop">
-          <span>Destination</span>
-          <strong>{request.outputPath === "" ? "Not selected" : leafName(request.outputPath)}</strong>
-          <code title={request.outputPath}>{request.outputPath || "Choose an output folder"}</code>
-        </article>
-      </div>
-    </section>
   );
 }
 
@@ -751,12 +697,6 @@ function App() {
             </div>
           </form>
         </section>
-
-        <Manifest
-          request={request}
-          summary={summary}
-          validating={currentValidation.status === "pending"}
-        />
 
         <section className="run-card" aria-labelledby="run-heading">
           <div className="run-card__heading">
