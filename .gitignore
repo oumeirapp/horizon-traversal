@@ -20,3 +20,5 @@ output/
 src-tauri/resources/native/libpdfium.dylib
 src-tauri/binaries/ffmpeg-*
 src-tauri/binaries/ffprobe-*
+
+ffmpeg/
