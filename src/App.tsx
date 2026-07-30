@@ -249,58 +249,6 @@ function AssetRoute({
   );
 }
 
-function MiniStageRoute({ ticket }: { ticket: TicketProgress }) {
-  const activeIndex = stagePosition(ticket.stage);
-  return (
-    <span className="mini-route" aria-label={`${ticket.name} progress`}>
-      {STAGES.map((stage, index) => (
-        <span
-          key={stage.id}
-          title={stage.label}
-          className={
-            index < activeIndex ||
-            (index === activeIndex &&
-              ticket.status !== "failed" &&
-              ticket.status !== null)
-              ? "is-done"
-              : index === activeIndex && ticket.status === "failed"
-                ? "is-failed"
-                : index === activeIndex
-                  ? "is-active"
-                  : ""
-          }
-        />
-      ))}
-    </span>
-  );
-}
-
-function TicketStrip({ tickets, currentTicket }: { tickets: TicketProgress[]; currentTicket: string | null }) {
-  if (tickets.length === 0) {
-    return <p className="ticket-strip__empty">Tickets will line up here when processing begins.</p>;
-  }
-  const currentIndex = tickets.findIndex((ticket) => ticket.name === currentTicket);
-  const start = Math.max(0, Math.min(currentIndex - 3, tickets.length - 8));
-  const visible = tickets.slice(start, start + 8);
-  return (
-    <div className="ticket-strip" aria-label="Ticket progress">
-      {start > 0 ? <span className="ticket-strip__more">+{start}</span> : null}
-      {visible.map((ticket) => (
-        <article
-          key={ticket.name}
-          className={`ticket-chip${ticket.name === currentTicket ? " ticket-chip--current" : ""}`}
-        >
-          <span title={ticket.name}>{ticket.name}</span>
-          <MiniStageRoute ticket={ticket} />
-        </article>
-      ))}
-      {start + visible.length < tickets.length ? (
-        <span className="ticket-strip__more">+{tickets.length - start - visible.length}</span>
-      ) : null}
-    </div>
-  );
-}
-
 function RunClock({
   startedAt,
   finishedAt,
@@ -726,8 +674,6 @@ function App() {
             stage={run.currentStage}
             ticketStatus={currentTicketProgress?.status ?? null}
           />
-          <TicketStrip tickets={run.tickets} currentTicket={run.currentTicket} />
-
           <dl className="run-metrics">
             <div><dt>Tickets</dt><dd>{completedTickets}<span> / {run.totalTickets || summary?.tickets.length || 0}</span></dd></div>
             <div><dt>Copied</dt><dd>{run.summary?.copiedFiles ?? liveCopied}</dd></div>

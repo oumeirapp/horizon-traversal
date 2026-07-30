@@ -129,7 +129,6 @@ input:disabled {
 .start-row p,
 .log-entry p,
 .log-empty p,
-.ticket-strip__empty,
 .activity-tabs__limit {
   margin: 0;
 }
@@ -656,81 +655,6 @@ input::placeholder {
 
 @keyframes route-pulse {
   50% { box-shadow: 0 0 0 9px rgb(67 216 189 / 3%); }
-}
-
-.ticket-strip {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 49px;
-  padding: 8px;
-  overflow: hidden;
-  border: 1px solid var(--line-soft);
-  border-radius: 10px;
-  background: rgb(4 15 25 / 42%);
-}
-
-.ticket-chip {
-  flex: 1 1 0;
-  min-width: 92px;
-  max-width: 180px;
-  padding: 7px 8px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-}
-
-.ticket-chip--current {
-  border-color: rgb(67 216 189 / 24%);
-  background: rgb(67 216 189 / 6%);
-}
-
-.ticket-chip > span:first-child {
-  display: block;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 0.64rem;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mini-route {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 2px;
-  margin-top: 7px;
-}
-
-.mini-route > span {
-  height: 2px;
-  border-radius: 2px;
-  background: #2e495b;
-}
-
-.mini-route > .is-done {
-  background: var(--teal);
-}
-
-.mini-route > .is-active {
-  background: var(--amber);
-}
-
-.mini-route > .is-failed {
-  background: var(--red);
-}
-
-.ticket-strip__more,
-.ticket-strip__empty {
-  color: var(--quiet);
-  font-family: var(--mono);
-  font-size: 0.62rem;
-}
-
-.ticket-strip__empty {
-  padding: 10px;
-  border: 1px dashed var(--line-soft);
-  border-radius: 9px;
-  text-align: center;
 }
 
 .run-metrics {
