@@ -9,6 +9,8 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   --ink: #262639;
+  --background-top: #303034;
+  --background-bottom: #262639;
   --navy: #101b27;
   --deck: #142331;
   --deck-raised: #192b3b;
@@ -42,7 +44,11 @@ body {
   min-height: 100vh;
   margin: 0;
   overflow-x: hidden;
-  background: linear-gradient(135deg, #373737 13%, #262639 94%);
+  background: linear-gradient(
+    to bottom,
+    var(--background-top) 13%,
+    var(--background-bottom) 94%
+  );
   background-attachment: fixed;
 }
 
@@ -100,7 +106,7 @@ input:disabled {
   min-height: 80px;
   padding: 16px clamp(24px, 5vw, 72px);
   border-bottom: 1px solid var(--line-soft);
-  background: rgb(17 20 29 / 78%);
+  background: transparent;
   backdrop-filter: blur(22px);
 }
 
