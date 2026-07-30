@@ -109,10 +109,24 @@ input:disabled {
   gap: 14px;
 }
 
-.brand img {
+.brand__mark {
+  display: grid;
   flex: none;
-  border-radius: 10px;
-  box-shadow: 0 9px 24px rgb(0 0 0 / 28%);
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  padding: 4px;
+  border-radius: 13px;
+  background: #fff;
+}
+
+.brand img {
+  display: block;
+  flex: none;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .brand h1,

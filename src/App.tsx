@@ -507,7 +507,9 @@ function App() {
     <main className={`app-shell${logsExpanded ? " app-shell--logs-expanded" : ""}`}>
       <header className="app-header">
         <div className="brand">
-          <img src="/horizon%20traversal.png" width="42" height="42" alt="" />
+          <span className="brand__mark" aria-hidden="true">
+            <img src="/horizon%20traversal.png" width="40" height="40" alt="" />
+          </span>
           <div>
             <h1>X Traversal</h1>
             <p>Approved asset transfer</p>
