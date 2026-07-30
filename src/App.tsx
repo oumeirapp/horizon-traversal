@@ -508,7 +508,7 @@ function App() {
       <header className="app-header">
         <div className="brand">
           <span className="brand__mark" aria-hidden="true">
-            <img src="/horizon%20traversal.png" width="40" height="40" alt="" />
+            <img src="/horizon%20traversal%20transparent.png" width="40" height="40" alt="" />
           </span>
           <div>
             <h1>X Traversal</h1>
