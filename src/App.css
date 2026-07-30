@@ -663,13 +663,74 @@ input::placeholder {
   background: rgb(255 127 125 / 8%);
 }
 
+.asset-route__stop--warning,
+.asset-route__stop--issue {
+  color: var(--amber);
+}
+
+.asset-route__stop--warning .asset-route__rail,
+.asset-route__stop--issue .asset-route__rail {
+  background: var(--amber);
+}
+
+.asset-route__stop--warning .asset-route__node,
+.asset-route__stop--issue .asset-route__node {
+  border-color: var(--amber);
+  background: rgb(240 189 103 / 8%);
+}
+
+.asset-route__stop--current.asset-route__stop--warning .asset-route__node,
+.asset-route__stop--current.asset-route__stop--issue .asset-route__node {
+  box-shadow: 0 0 0 5px rgb(240 189 103 / 10%);
+}
+
+.asset-route__stop--issue-error {
+  color: var(--red);
+}
+
+.asset-route__stop--issue-error .asset-route__rail {
+  background: var(--red);
+}
+
+.asset-route__stop--issue-error .asset-route__node {
+  border-color: var(--red);
+  background: rgb(255 127 125 / 8%);
+}
+
+.asset-route__stop--current.asset-route__stop--issue-error .asset-route__node {
+  box-shadow: 0 0 0 5px rgb(255 127 125 / 10%);
+}
+
+.asset-route__issue-count {
+  position: absolute;
+  top: -7px;
+  right: -9px;
+  display: grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  color: #251b08;
+  border: 2px solid var(--deck);
+  border-radius: 999px;
+  background: var(--amber);
+  font-size: 0.58rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.asset-route__stop--issue-error .asset-route__issue-count {
+  color: #2a0808;
+  background: var(--red);
+}
+
 @keyframes route-pulse {
   50% { box-shadow: 0 0 0 9px rgb(67 216 189 / 3%); }
 }
 
 .run-metrics {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 1px;
   margin: 22px 0 0;
   overflow: hidden;
@@ -751,8 +812,9 @@ input::placeholder {
 }
 
 .result-totals {
-  display: flex;
-  gap: 22px;
+  display: grid;
+  grid-template-columns: repeat(3, max-content);
+  gap: 12px 22px;
   margin: 0;
 }
 
@@ -1201,7 +1263,7 @@ input::placeholder {
 
   .result-totals {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     width: 100%;
   }
 

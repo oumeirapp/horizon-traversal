@@ -51,6 +51,12 @@ const partialSummary: PipelineSummary = {
   outputPath: "/exports",
 };
 
+const warningOnlySummary: PipelineSummary = {
+  ...partialSummary,
+  failedFiles: 0,
+  errors: 0,
+};
+
 async function configureValidRun() {
   fireEvent.change(screen.getByLabelText("Input folder"), {
     target: { value: "/tickets" },
@@ -223,11 +229,24 @@ describe("X Traversal workbench", () => {
     expect(
       screen.getByRole("heading", { name: "Transfer completed with issues" }),
     ).toBeVisible();
-    expect(screen.getByRole("tab", { name: /Warnings 0/ })).toBeVisible();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(20);
-    });
     const warningTab = screen.getByRole("tab", { name: /Warnings 1/ });
+    expect(screen.getByText("Resize images: 1 warning, 1 error")).toBeVisible();
+    const imageStage = screen.getByText("Resize images: 1 warning, 1 error").closest("li");
+    expect(imageStage).toHaveClass(
+      "asset-route__stop--issue",
+      "asset-route__stop--issue-error",
+    );
+
+    const result = screen.getByRole("region", {
+      name: "Transfer completed with issues",
+    });
+    expect(within(result).getByText("Successful tickets").nextElementSibling).toHaveTextContent("0");
+    expect(within(result).getByText("Partial tickets").nextElementSibling).toHaveTextContent("1");
+    expect(within(result).getByText("Failed tickets").nextElementSibling).toHaveTextContent("0");
+    expect(within(result).getByText("Failed files").nextElementSibling).toHaveTextContent("1");
+    expect(within(result).getByText("Warnings").nextElementSibling).toHaveTextContent("1");
+    expect(within(result).getByText("Errors").nextElementSibling).toHaveTextContent("1");
+
     fireEvent.click(warningTab);
     expect(screen.getByText("Skipped a large preview")).toBeVisible();
     expect(screen.queryByText("Could not resize one image")).not.toBeInTheDocument();
@@ -237,6 +256,162 @@ describe("X Traversal workbench", () => {
       await Promise.resolve();
     });
     expect(nativeMocks.openLastOutput).toHaveBeenCalledOnce();
+  });
+
+  it("displays a warning-only backend partial result as successful", async () => {
+    const streamed: PipelineEvent[] = [
+      { type: "pipelineStarted", totalTickets: 1 },
+      { type: "ticketStarted", ticket: "P1 Launch", index: 1, totalTickets: 1 },
+      { type: "stageChanged", ticket: "P1 Launch", stage: "images" },
+      {
+        type: "log",
+        ticket: "P1 Launch",
+        level: "warning",
+        message: "Skipped an unsupported preview",
+        path: null,
+        timestampMs: 1_750_000_000_000,
+      },
+      { type: "stageChanged", ticket: "P1 Launch", stage: "report" },
+      {
+        type: "ticketCompleted",
+        ticket: "P1 Launch",
+        status: "partialSuccess",
+        copiedFiles: 4,
+        changedFiles: 2,
+        failedFiles: 0,
+        warnings: 1,
+        errors: 0,
+        elapsedMs: 2_500,
+      },
+      { type: "pipelineCompleted", summary: warningOnlySummary },
+    ];
+    nativeMocks.startPipeline.mockImplementation(
+      async (_request: unknown, onEvent: (event: PipelineEvent) => void) => {
+        streamed.forEach(onEvent);
+        return warningOnlySummary;
+      },
+    );
+    render(<App />);
+    await configureValidRun();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Start processing" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const result = screen.getByRole("region", { name: "Transfer complete" });
+    expect(
+      screen.queryByRole("heading", { name: "Transfer completed with issues" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Complete");
+    expect(
+      screen.getByText(
+        "Transfer completed successfully. Warnings remain available for review.",
+      ),
+    ).toBeVisible();
+    expect(within(result).getByText("Successful tickets").nextElementSibling).toHaveTextContent("1");
+    expect(within(result).getByText("Partial tickets").nextElementSibling).toHaveTextContent("0");
+    expect(within(result).getByText("Warnings").nextElementSibling).toHaveTextContent("1");
+    expect(within(result).getByText("Errors").nextElementSibling).toHaveTextContent("0");
+    expect(screen.getByText("Resize images: 1 warning").closest("li")).toHaveClass(
+      "asset-route__stop--warning",
+    );
+    expect(
+      screen.getByText("Resize images: 1 warning").closest("li"),
+    ).not.toHaveClass(
+      "asset-route__stop--issue",
+      "asset-route__stop--issue-error",
+    );
+  });
+
+  it("shows batched warning counts on the active stage while a run is live", async () => {
+    nativeMocks.startPipeline.mockImplementation(
+      (_request: unknown, onEvent: (event: PipelineEvent) => void) => {
+        onEvent({ type: "pipelineStarted", totalTickets: 1 });
+        onEvent({
+          type: "ticketStarted",
+          ticket: "P1 Launch",
+          index: 1,
+          totalTickets: 1,
+        });
+        onEvent({ type: "stageChanged", ticket: "P1 Launch", stage: "copy" });
+        onEvent({
+          type: "log",
+          ticket: "P1 Launch",
+          level: "warning",
+          message: "Skipped an unsupported source",
+          path: null,
+          timestampMs: 1_750_000_000_000,
+        });
+        return new Promise<PipelineSummary>(() => undefined);
+      },
+    );
+    render(<App />);
+    await configureValidRun();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start processing" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+    });
+
+    const runCard = screen.getByRole("region", { name: "P1 Launch" });
+    expect(within(runCard).getByText("Warnings").nextElementSibling).toHaveTextContent("1");
+    expect(screen.getByText("Copy assets: 1 warning")).toBeVisible();
+    expect(screen.getByText("Copy assets: 1 warning").closest("li")).toHaveClass(
+      "asset-route__stop--warning",
+      "asset-route__stop--current",
+    );
+  });
+
+  it("keeps a failed-file partial ticket from rendering an all-green route", async () => {
+    const failedFileSummary: PipelineSummary = {
+      ...partialSummary,
+      warnings: 0,
+    };
+    nativeMocks.startPipeline.mockImplementation(
+      async (_request: unknown, onEvent: (event: PipelineEvent) => void) => {
+        onEvent({ type: "pipelineStarted", totalTickets: 1 });
+        onEvent({
+          type: "ticketStarted",
+          ticket: "P1 Launch",
+          index: 1,
+          totalTickets: 1,
+        });
+        onEvent({ type: "stageChanged", ticket: "P1 Launch", stage: "report" });
+        onEvent({
+          type: "ticketCompleted",
+          ticket: "P1 Launch",
+          status: "partialSuccess",
+          copiedFiles: 4,
+          changedFiles: 2,
+          failedFiles: 1,
+          warnings: 0,
+          errors: 1,
+          elapsedMs: 2_500,
+        });
+        onEvent({ type: "pipelineCompleted", summary: failedFileSummary });
+        return failedFileSummary;
+      },
+    );
+    render(<App />);
+    await configureValidRun();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Start processing" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      screen.getByRole("heading", { name: "Transfer completed with issues" }),
+    ).toBeVisible();
+    const reportStage = screen.getByText("Write report: 1 failed file");
+    expect(reportStage).toBeVisible();
+    expect(reportStage.closest("li")).toHaveClass(
+      "asset-route__stop--issue",
+      "asset-route__stop--issue-error",
+    );
   });
 
   it("shows a live stage before resolving a successful run and starts a focused new run", async () => {
@@ -285,6 +460,44 @@ describe("X Traversal workbench", () => {
     expect(screen.getByLabelText("Input folder")).toHaveFocus();
   });
 
+  it("flushes pending events before showing an invocation failure", async () => {
+    nativeMocks.startPipeline.mockImplementation(
+      async (_request: unknown, onEvent: (event: PipelineEvent) => void) => {
+        onEvent({ type: "pipelineStarted", totalTickets: 1 });
+        onEvent({
+          type: "ticketStarted",
+          ticket: "P1 Launch",
+          index: 1,
+          totalTickets: 1,
+        });
+        onEvent({ type: "stageChanged", ticket: "P1 Launch", stage: "copy" });
+        onEvent({
+          type: "log",
+          ticket: "P1 Launch",
+          level: "warning",
+          message: "One source could not be inspected",
+          path: null,
+          timestampMs: 1_750_000_000_000,
+        });
+        throw new Error("Native run unavailable");
+      },
+    );
+    render(<App />);
+    await configureValidRun();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Start processing" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      screen.getByRole("heading", { name: "Transfer could not complete" }),
+    ).toBeVisible();
+    expect(screen.getByRole("tab", { name: /Warnings 1/ })).toBeVisible();
+    expect(screen.getByText("One source could not be inspected")).toBeVisible();
+  });
+
   it("keeps unreached stages pending when a ticket fails during discovery", async () => {
     const failedSummary: PipelineSummary = {
       ...partialSummary,
@@ -322,7 +535,7 @@ describe("X Traversal workbench", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Start processing" }));
       await Promise.resolve();
-      await vi.advanceTimersByTimeAsync(20);
+      await Promise.resolve();
     });
 
     expect(screen.getByRole("heading", { name: "Transfer could not complete" })).toBeVisible();

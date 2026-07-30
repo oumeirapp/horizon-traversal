@@ -20,6 +20,13 @@ export interface RunLogEntry {
   timestampMs: number;
 }
 
+export interface IssueCounts {
+  warnings: number;
+  errors: number;
+}
+
+export type StageIssueCounts = Record<PipelineStage, IssueCounts>;
+
 export interface TicketProgress {
   name: string;
   index: number;
@@ -30,6 +37,7 @@ export interface TicketProgress {
   failedFiles: number;
   warnings: number;
   errors: number;
+  stageIssues: StageIssueCounts;
   elapsedMs: number;
 }
 
@@ -43,6 +51,8 @@ export interface RunState {
   currentStage: PipelineStage | null;
   tickets: TicketProgress[];
   logs: RunLogEntry[];
+  unscopedWarnings: number;
+  unscopedErrors: number;
   summary: PipelineSummary | null;
   fatalError: string | null;
   nextLogId: number;
@@ -66,6 +76,8 @@ export function createInitialRunState(): RunState {
     currentStage: null,
     tickets: [],
     logs: [],
+    unscopedWarnings: 0,
+    unscopedErrors: 0,
     summary: null,
     fatalError: null,
     nextLogId: 1,
@@ -83,6 +95,14 @@ function emptyTicket(name: string, index: number): TicketProgress {
     failedFiles: 0,
     warnings: 0,
     errors: 0,
+    stageIssues: {
+      discover: { warnings: 0, errors: 0 },
+      copy: { warnings: 0, errors: 0 },
+      pdf: { warnings: 0, errors: 0 },
+      images: { warnings: 0, errors: 0 },
+      video: { warnings: 0, errors: 0 },
+      report: { warnings: 0, errors: 0 },
+    },
     elapsedMs: 0,
   };
 }
@@ -101,6 +121,66 @@ function updateTicket(
   const next = tickets.slice();
   next[index] = update(tickets[index]);
   return next;
+}
+
+function normalizeTicketStatus(
+  status: TicketStatus,
+  errors: number,
+): TicketStatus {
+  if (errors === 0) return "success";
+  return status === "failed" ? "failed" : "partialSuccess";
+}
+
+function normalizeSummary(
+  summary: PipelineSummary,
+  tickets: TicketProgress[],
+): PipelineSummary {
+  let successfulTickets = summary.successfulTickets;
+  let partialTickets = summary.partialTickets;
+  let failedTickets = summary.failedTickets;
+  const completedTickets = tickets.filter((ticket) => ticket.status !== null);
+
+  if (summary.errors === 0) {
+    successfulTickets = summary.totalTickets;
+    partialTickets = 0;
+    failedTickets = 0;
+  } else if (
+    summary.totalTickets > 0 &&
+    completedTickets.length === summary.totalTickets
+  ) {
+    successfulTickets = 0;
+    partialTickets = 0;
+    failedTickets = 0;
+    for (const ticket of completedTickets) {
+      if (ticket.status === "success") successfulTickets += 1;
+      else if (ticket.status === "partialSuccess") partialTickets += 1;
+      else failedTickets += 1;
+    }
+  }
+
+  const hasIssues = summary.errors > 0;
+  const status: RunStatus = !hasIssues
+    ? "success"
+    : successfulTickets + partialTickets > 0
+      ? "partialSuccess"
+      : "failed";
+
+  if (
+    status === summary.status &&
+    successfulTickets === summary.successfulTickets &&
+    partialTickets === summary.partialTickets &&
+    failedTickets === summary.failedTickets
+  ) {
+    return summary;
+  }
+
+  return {
+    ...summary,
+    status,
+    successfulTickets,
+    partialTickets,
+    failedTickets,
+  };
 }
 
 export function reducePipelineEvents(
@@ -156,16 +236,60 @@ export function reducePipelineEvents(
           timestampMs: event.timestampMs,
         });
         nextLogId += 1;
+        if (event.level === "warning" || event.level === "error") {
+          const warning = event.level === "warning" ? 1 : 0;
+          const error = event.level === "error" ? 1 : 0;
+          if (event.ticket === null) {
+            next = {
+              ...next,
+              unscopedWarnings: next.unscopedWarnings + warning,
+              unscopedErrors: next.unscopedErrors + error,
+            };
+          } else {
+            next = {
+              ...next,
+              tickets: updateTicket(next.tickets, event.ticket, (ticket) => {
+                if (ticket.stage === null) {
+                  return {
+                    ...ticket,
+                    warnings: ticket.warnings + warning,
+                    errors: ticket.errors + error,
+                  };
+                }
+
+                const stage = ticket.stage;
+                const stageIssues = ticket.stageIssues[stage];
+                return {
+                  ...ticket,
+                  warnings: ticket.warnings + warning,
+                  errors: ticket.errors + error,
+                  stageIssues: {
+                    ...ticket.stageIssues,
+                    [stage]: {
+                      warnings: stageIssues.warnings + warning,
+                      errors: stageIssues.errors + error,
+                    },
+                  },
+                };
+              }),
+            };
+          }
+        }
         break;
       case "ticketCompleted":
         next = {
           ...next,
           tickets: updateTicket(next.tickets, event.ticket, (ticket) => ({
             ...ticket,
-            status: event.status,
+            status: normalizeTicketStatus(
+              event.status,
+              event.errors,
+            ),
             copiedFiles: event.copiedFiles,
             changedFiles: event.changedFiles,
             failedFiles: event.failedFiles,
+            // Completion totals are authoritative and replace the provisional
+            // counts derived from live log events.
             warnings: event.warnings,
             errors: event.errors,
             elapsedMs: event.elapsedMs,
@@ -205,13 +329,15 @@ export function runReducer(state: RunState, action: RunAction): RunState {
       };
     case "events":
       return reducePipelineEvents(state, action.events);
-    case "resolved":
+    case "resolved": {
+      const summary = normalizeSummary(action.summary, state.tickets);
       return {
         ...state,
-        phase: action.summary.status,
-        summary: action.summary,
+        phase: summary.status,
+        summary,
         finishedAt: action.finishedAt,
       };
+    }
     case "rejected":
       return {
         ...state,

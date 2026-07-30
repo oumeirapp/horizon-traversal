@@ -159,28 +159,28 @@ fn multi_ticket_run_orders_events_and_keeps_reports_ticket_local() {
 }
 
 #[test]
-fn ticket_wide_failure_does_not_block_the_next_ticket_and_is_partial_success() {
+fn warning_only_ticket_and_run_are_successful() {
     let temp = tempdir().unwrap();
     let input = temp.path().join("input");
     let output = temp.path().join("output");
-    let failed = input.join("P1 Missing Sources");
+    let warning_only = input.join("P1 Missing Sources");
     let successful = input.join("P2 Ready");
-    fs::create_dir_all(&failed).unwrap();
+    fs::create_dir_all(&warning_only).unwrap();
     let successful_asset = successful.join("Deliverables/ready.gif");
     write(&successful_asset, b"ready fixture");
 
     let events = RecordingEvents::default();
     let summary = run(
-        plan(input, output.clone(), vec![failed, successful]),
+        plan(input, output.clone(), vec![warning_only, successful]),
         &events,
     );
     let recorded = events.snapshot();
 
-    assert_eq!(summary.status, RunStatus::PartialSuccess);
+    assert_eq!(summary.status, RunStatus::Success);
     assert_eq!(summary.total_tickets, 2);
-    assert_eq!(summary.successful_tickets, 1);
+    assert_eq!(summary.successful_tickets, 2);
     assert_eq!(summary.partial_tickets, 0);
-    assert_eq!(summary.failed_tickets, 1);
+    assert_eq!(summary.failed_tickets, 0);
     assert_eq!(summary.copied_files, 1);
     assert_eq!(summary.warnings, 1);
 
@@ -188,10 +188,10 @@ fn ticket_wide_failure_does_not_block_the_next_ticket_and_is_partial_success() {
     expected.extend([
         "ticket:start:P1 Missing Sources".to_owned(),
         "stage:P1 Missing Sources:discover".to_owned(),
-        "ticket:complete:P1 Missing Sources:failed".to_owned(),
+        "ticket:complete:P1 Missing Sources:success".to_owned(),
     ]);
     expected.extend(expected_ticket_events("P2 Ready", "success"));
-    expected.push("pipeline:complete:partialSuccess".to_owned());
+    expected.push("pipeline:complete:success".to_owned());
     assert_eq!(structural_events(&recorded), expected);
 
     assert!(!output.join("P1 Missing Sources/report.txt").exists());
@@ -203,4 +203,39 @@ fn ticket_wide_failure_does_not_block_the_next_ticket_and_is_partial_success() {
             fs::canonicalize(successful_asset).unwrap().display()
         )
     );
+}
+
+#[test]
+fn ticket_error_does_not_block_the_next_ticket_and_is_partial_success() {
+    let temp = tempdir().unwrap();
+    let input = temp.path().join("input");
+    let output = temp.path().join("output");
+    let missing = input.join("P1 Missing Ticket");
+    let successful = input.join("P2 Ready");
+    let successful_asset = successful.join("Deliverables/ready.gif");
+    write(&successful_asset, b"ready fixture");
+
+    let events = RecordingEvents::default();
+    let summary = run(
+        plan(input, output.clone(), vec![missing, successful]),
+        &events,
+    );
+    let recorded = events.snapshot();
+
+    assert_eq!(summary.status, RunStatus::PartialSuccess);
+    assert_eq!(summary.successful_tickets, 1);
+    assert_eq!(summary.partial_tickets, 0);
+    assert_eq!(summary.failed_tickets, 1);
+    assert_eq!(summary.warnings, 0);
+    assert_eq!(summary.errors, 1);
+
+    let mut expected = vec!["pipeline:start:2".to_owned()];
+    expected.extend([
+        "ticket:start:P1 Missing Ticket".to_owned(),
+        "stage:P1 Missing Ticket:discover".to_owned(),
+        "ticket:complete:P1 Missing Ticket:failed".to_owned(),
+    ]);
+    expected.extend(expected_ticket_events("P2 Ready", "success"));
+    expected.push("pipeline:complete:partialSuccess".to_owned());
+    assert_eq!(structural_events(&recorded), expected);
 }

@@ -34,6 +34,14 @@ pub struct VideoMetadata {
     pub dimensions: Dimensions,
     pub duration_seconds: Option<f64>,
     pub audio_streams: usize,
+    pub audio_codecs: Vec<Option<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioEncoding {
+    None,
+    Copy,
+    Aac192,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,22 +219,49 @@ pub fn probe_video(runner: &impl MediaToolRunner, path: &Path) -> Result<VideoMe
         .filter(|height| *height > 0)
         .ok_or_else(|| "video stream has no valid height".to_owned())?;
 
+    let audio_streams = document
+        .streams
+        .iter()
+        .filter(|stream| stream.codec_type.as_deref() == Some("audio"))
+        .collect::<Vec<_>>();
+
     Ok(VideoMetadata {
         dimensions: Dimensions::new(width, height),
         duration_seconds: document.format.duration.and_then(NumberOrString::into_f64),
-        audio_streams: document
-            .streams
-            .iter()
-            .filter(|stream| stream.codec_type.as_deref() == Some("audio"))
-            .count(),
+        audio_streams: audio_streams.len(),
+        audio_codecs: audio_streams
+            .into_iter()
+            .map(|stream| stream.codec_name.clone())
+            .collect(),
     })
+}
+
+fn audio_encoding(metadata: &VideoMetadata, output: &Path) -> AudioEncoding {
+    if metadata.audio_streams == 0 {
+        return AudioEncoding::None;
+    }
+
+    if !is_mp4_or_mov(output) {
+        return AudioEncoding::Copy;
+    }
+
+    let can_copy = metadata.audio_codecs.iter().all(|codec| {
+        codec.as_deref().is_some_and(|codec| {
+            codec.eq_ignore_ascii_case("aac") || codec.eq_ignore_ascii_case("alac")
+        })
+    });
+    if can_copy {
+        AudioEncoding::Copy
+    } else {
+        AudioEncoding::Aac192
+    }
 }
 
 pub fn ffmpeg_arguments(
     input: &Path,
     output: &Path,
     target: Dimensions,
-    has_audio: bool,
+    audio_encoding: AudioEncoding,
 ) -> Vec<OsString> {
     let mut arguments = ["-y", "-nostdin", "-hide_banner", "-loglevel", "error", "-i"]
         .into_iter()
@@ -243,21 +278,40 @@ pub fn ffmpeg_arguments(
         target.width, target.height
     )));
     arguments.extend(
-        ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
-            .into_iter()
-            .map(OsString::from),
+        [
+            "-map_metadata",
+            "0",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+        ]
+        .into_iter()
+        .map(OsString::from),
     );
 
-    if has_audio {
-        if is_mp4_or_mov(output) {
+    match audio_encoding {
+        AudioEncoding::None => {}
+        AudioEncoding::Copy => {
+            arguments.extend(["-c:a", "copy"].into_iter().map(OsString::from));
+        }
+        AudioEncoding::Aac192 => {
             arguments.extend(
                 ["-c:a", "aac", "-b:a", "192k"]
                     .into_iter()
                     .map(OsString::from),
             );
-        } else {
-            arguments.extend(["-c:a", "copy"].into_iter().map(OsString::from));
         }
+    }
+    if audio_encoding != AudioEncoding::None {
+        arguments.extend(
+            ["-disposition:a:0", "default"]
+                .into_iter()
+                .map(OsString::from),
+        );
+    }
+    if is_mp4_or_mov(output) {
+        arguments.extend(["-movflags", "+faststart"].into_iter().map(OsString::from));
     }
     arguments.push(output.as_os_str().to_os_string());
     arguments
@@ -266,6 +320,7 @@ pub fn ffmpeg_arguments(
 pub fn resize_videos(
     folder: &Path,
     runner: &impl MediaToolRunner,
+    on_notice: &mut impl FnMut(PipelineNotice),
 ) -> Result<ProcessingOutcome, VideoBatchError> {
     let mut entries = fs::read_dir(folder)
         .map_err(|source| VideoBatchError::ReadDirectory {
@@ -292,7 +347,7 @@ pub fn resize_videos(
             path: path.clone(),
             source,
         })? {
-            outcome.notices.push(PipelineNotice::warning(
+            on_notice(PipelineNotice::warning(
                 format!("Skipped symlink video: {}", path.display()),
                 Some(path),
             ));
@@ -302,10 +357,14 @@ pub fn resize_videos(
             continue;
         }
 
+        on_notice(PipelineNotice::info(
+            format!("Processing video: {}", entry.file_name().to_string_lossy()),
+            Some(path.clone()),
+        ));
         match resize_video(&path, runner) {
             Ok(VideoChange::Skipped(dimensions)) => {
                 outcome.processed += 1;
-                outcome.notices.push(PipelineNotice::info(
+                on_notice(PipelineNotice::info(
                     format!(
                         "Video within HD bounds, skipped: {} ({}x{})",
                         entry.file_name().to_string_lossy(),
@@ -320,26 +379,32 @@ pub fn resize_videos(
                 target,
                 size_before,
                 size_after,
+                audio_streams,
             }) => {
                 outcome.processed += 1;
                 outcome.changed += 1;
-                outcome.notices.push(PipelineNotice::success(
+                on_notice(PipelineNotice::success(
                     format!(
-                        "Video resized: {} ({}x{} -> {}x{}) {} -> {}",
+                        "Video resized: {} ({}x{} -> {}x{}) {} -> {}{}",
                         entry.file_name().to_string_lossy(),
                         original.width,
                         original.height,
                         target.width,
                         target.height,
                         human_size(size_before),
-                        human_size(size_after)
+                        human_size(size_after),
+                        if audio_streams > 0 {
+                            " — audio preserved"
+                        } else {
+                            ""
+                        }
                     ),
                     Some(path),
                 ));
             }
             Err(error) => {
                 outcome.failed_files += 1;
-                outcome.notices.push(PipelineNotice::error(
+                on_notice(PipelineNotice::error(
                     format!("Failed to resize video {}: {error}", path.display()),
                     Some(path),
                 ));
@@ -357,6 +422,7 @@ enum VideoChange {
         target: Dimensions,
         size_before: u64,
         size_after: u64,
+        audio_streams: usize,
     },
 }
 
@@ -374,8 +440,8 @@ fn resize_video(path: &Path, runner: &impl MediaToolRunner) -> Result<VideoChang
     let temporary = unique_video_temporary_path(path).map_err(|error| error.to_string())?;
     let result = (|| -> Result<VideoChange, String> {
         let size_before = fs::metadata(path).map_err(|error| error.to_string())?.len();
-        let arguments =
-            ffmpeg_arguments(path, &temporary, target, source_metadata.audio_streams > 0);
+        let audio_encoding = audio_encoding(&source_metadata, &temporary);
+        let arguments = ffmpeg_arguments(path, &temporary, target, audio_encoding);
         let output = runner
             .run(NativeTool::Ffmpeg, &arguments)
             .map_err(|error| error.to_string())?;
@@ -397,6 +463,14 @@ fn resize_video(path: &Path, runner: &impl MediaToolRunner) -> Result<VideoChang
                 resized_metadata.audio_streams, source_metadata.audio_streams
             ));
         }
+        if audio_encoding == AudioEncoding::Copy
+            && resized_metadata.audio_codecs != source_metadata.audio_codecs
+        {
+            return Err(format!(
+                "encoded audio codecs are {:?}, expected {:?}",
+                resized_metadata.audio_codecs, source_metadata.audio_codecs
+            ));
+        }
 
         let size_after = fs::metadata(&temporary)
             .map_err(|error| error.to_string())?
@@ -408,6 +482,7 @@ fn resize_video(path: &Path, runner: &impl MediaToolRunner) -> Result<VideoChang
             target,
             size_before,
             size_after,
+            audio_streams: source_metadata.audio_streams,
         })
     })();
 
@@ -493,6 +568,7 @@ struct ProbeDocument {
 #[derive(Debug, Deserialize)]
 struct ProbeStream {
     codec_type: Option<String>,
+    codec_name: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
 }
@@ -588,13 +664,14 @@ mod tests {
     #[test]
     fn probe_deserializes_video_audio_and_string_duration() {
         let runner = FakeRunner::new(vec![successful_output(
-            br#"{"streams":[{"codec_type":"video","width":1920,"height":1080},{"codec_type":"audio"}],"format":{"duration":"1.25"}}"#,
+            br#"{"streams":[{"codec_type":"video","width":1920,"height":1080},{"codec_type":"audio","codec_name":"aac"}],"format":{"duration":"1.25"}}"#,
         )]);
 
         let metadata = probe_video(&runner, Path::new("clip.mp4")).unwrap();
 
         assert_eq!(metadata.dimensions, Dimensions::new(1_920, 1_080));
         assert_eq!(metadata.audio_streams, 1);
+        assert_eq!(metadata.audio_codecs, vec![Some("aac".to_owned())]);
         assert_eq!(metadata.duration_seconds, Some(1.25));
     }
 
@@ -614,23 +691,41 @@ mod tests {
     }
 
     #[test]
-    fn encode_arguments_choose_audio_codec_from_container() {
+    fn encode_arguments_preserve_or_transcode_audio_explicitly() {
         let target = Dimensions::new(1_280, 720);
-        let mp4 = ffmpeg_arguments(
+        let copied_mp4 = ffmpeg_arguments(
             Path::new("input with spaces.mp4"),
             Path::new("output.MP4"),
             target,
-            true,
+            AudioEncoding::Copy,
         );
-        assert!(mp4.windows(2).any(|pair| pair == ["-c:a", "aac"]));
-        assert!(mp4.windows(2).any(|pair| pair == ["-b:a", "192k"]));
-        assert_eq!(mp4.last().unwrap(), "output.MP4");
+        assert!(copied_mp4.windows(2).any(|pair| pair == ["-c:a", "copy"]));
+        assert!(copied_mp4
+            .windows(2)
+            .any(|pair| pair == ["-disposition:a:0", "default"]));
+        assert!(copied_mp4
+            .windows(2)
+            .any(|pair| pair == ["-movflags", "+faststart"]));
+        assert_eq!(copied_mp4.last().unwrap(), "output.MP4");
+
+        let transcoded_mp4 = ffmpeg_arguments(
+            Path::new("input.mp4"),
+            Path::new("output.mp4"),
+            target,
+            AudioEncoding::Aac192,
+        );
+        assert!(transcoded_mp4
+            .windows(2)
+            .any(|pair| pair == ["-c:a", "aac"]));
+        assert!(transcoded_mp4
+            .windows(2)
+            .any(|pair| pair == ["-b:a", "192k"]));
 
         let avi = ffmpeg_arguments(
             Path::new("input.avi"),
             Path::new("output.avi"),
             target,
-            true,
+            AudioEncoding::Copy,
         );
         assert!(avi.windows(2).any(|pair| pair == ["-c:a", "copy"]));
 
@@ -638,8 +733,29 @@ mod tests {
             Path::new("input.mp4"),
             Path::new("output.mp4"),
             target,
-            false,
+            AudioEncoding::None,
         );
         assert!(!silent.iter().any(|argument| argument == "-c:a"));
+    }
+
+    #[test]
+    fn compatible_mp4_audio_is_copied_without_reencoding() {
+        let metadata = VideoMetadata {
+            dimensions: Dimensions::new(1_920, 1_080),
+            duration_seconds: Some(1.0),
+            audio_streams: 1,
+            audio_codecs: vec![Some("aac".to_owned())],
+        };
+        assert_eq!(
+            audio_encoding(&metadata, Path::new("output.mp4")),
+            AudioEncoding::Copy
+        );
+
+        let mut incompatible = metadata;
+        incompatible.audio_codecs = vec![Some("opus".to_owned())];
+        assert_eq!(
+            audio_encoding(&incompatible, Path::new("output.mp4")),
+            AudioEncoding::Aac192
+        );
     }
 }

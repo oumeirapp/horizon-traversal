@@ -22,6 +22,14 @@ const successSummary: PipelineSummary = {
   outputPath: "/out",
 };
 
+const warningOnlySummary: PipelineSummary = {
+  ...successSummary,
+  status: "partialSuccess",
+  successfulTickets: 0,
+  partialTickets: 1,
+  warnings: 1,
+};
+
 describe("run state", () => {
   it("tracks ticket and stage progress from a batched event stream", () => {
     const started = runReducer(createInitialRunState(), {
@@ -83,6 +91,113 @@ describe("run state", () => {
     expect(state.logs).toHaveLength(MAX_LOG_ENTRIES);
     expect(state.logs[0].message).toBe("Entry 5");
     expect(state.logs[MAX_LOG_ENTRIES - 1].message).toBe("Entry 10004");
+  });
+
+  it("tracks live stage issues and replaces provisional ticket totals on completion", () => {
+    const state = reducePipelineEvents(createInitialRunState(), [
+      {
+        type: "log",
+        ticket: null,
+        level: "warning",
+        message: "Run-level warning",
+        path: null,
+        timestampMs: 99,
+      },
+      { type: "ticketStarted", ticket: "P8", index: 1, totalTickets: 1 },
+      { type: "stageChanged", ticket: "P8", stage: "images" },
+      {
+        type: "log",
+        ticket: "P8",
+        level: "warning",
+        message: "Image was already within bounds",
+        path: null,
+        timestampMs: 100,
+      },
+      {
+        type: "log",
+        ticket: "P8",
+        level: "error",
+        message: "Could not resize one image",
+        path: null,
+        timestampMs: 101,
+      },
+    ]);
+
+    expect(state.tickets[0]).toMatchObject({ warnings: 1, errors: 1 });
+    expect(state.unscopedWarnings).toBe(1);
+    expect(state.tickets[0].stageIssues.images).toEqual({
+      warnings: 1,
+      errors: 1,
+    });
+
+    const completed = reducePipelineEvents(state, [
+      {
+        type: "ticketCompleted",
+        ticket: "P8",
+        status: "partialSuccess",
+        copiedFiles: 2,
+        changedFiles: 0,
+        failedFiles: 1,
+        warnings: 3,
+        errors: 2,
+        elapsedMs: 500,
+      },
+    ]);
+
+    expect(completed.tickets[0]).toMatchObject({ warnings: 3, errors: 2 });
+    expect(completed.tickets[0].stageIssues.images).toEqual({
+      warnings: 1,
+      errors: 1,
+    });
+  });
+
+  it("promotes warning-only ticket and run outcomes to success", () => {
+    const streamed = reducePipelineEvents(createInitialRunState(), [
+      { type: "pipelineStarted", totalTickets: 1 },
+      { type: "ticketStarted", ticket: "P9", index: 1, totalTickets: 1 },
+      { type: "stageChanged", ticket: "P9", stage: "copy" },
+      {
+        type: "log",
+        ticket: "P9",
+        level: "warning",
+        message: "Skipped an unsupported file",
+        path: null,
+        timestampMs: 100,
+      },
+      {
+        type: "ticketCompleted",
+        ticket: "P9",
+        status: "partialSuccess",
+        copiedFiles: 3,
+        changedFiles: 2,
+        failedFiles: 0,
+        warnings: 1,
+        errors: 0,
+        elapsedMs: 1_200,
+      },
+    ]);
+
+    expect(streamed.tickets[0]).toMatchObject({
+      status: "success",
+      warnings: 1,
+      errors: 0,
+    });
+
+    const resolved = runReducer(streamed, {
+      type: "resolved",
+      summary: warningOnlySummary,
+      finishedAt: 1_300,
+    });
+
+    expect(resolved.phase).toBe("success");
+    expect(resolved.summary).toMatchObject({
+      status: "success",
+      successfulTickets: 1,
+      partialTickets: 0,
+      failedTickets: 0,
+      warnings: 1,
+      errors: 0,
+    });
   });
 
   it("represents invocation failures even when no channel event arrived", () => {

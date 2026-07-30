@@ -25,6 +25,7 @@ import {
   createInitialRunState,
   runReducer,
   type RunPhase,
+  type StageIssueCounts,
   type TicketProgress,
 } from "./lib/run-state";
 import "./App.css";
@@ -128,6 +129,30 @@ function useBatchedEvents(
   const frameRef = useRef<{ id: number; animationFrame: boolean } | null>(null);
   const mountedRef = useRef(true);
 
+  const flush = useCallback(
+    (generation: number) => {
+      const frame = frameRef.current;
+      if (frame !== null) {
+        if (frame.animationFrame) window.cancelAnimationFrame(frame.id);
+        else window.clearTimeout(frame.id);
+        frameRef.current = null;
+      }
+
+      const events = queueRef.current
+        .splice(0)
+        .filter(
+          (queued) =>
+            queued.generation === generation &&
+            queued.generation === generationRef.current,
+        )
+        .map((queued) => queued.event);
+      if (mountedRef.current && events.length > 0) {
+        dispatch({ type: "events", events });
+      }
+    },
+    [dispatch, generationRef],
+  );
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -142,34 +167,26 @@ function useBatchedEvents(
     };
   }, []);
 
-  return useCallback(
+  const enqueue = useCallback(
     (event: PipelineEvent, generation: number) => {
       queueRef.current.push({ event, generation });
       if (frameRef.current !== null) return;
-      const flush = () => {
-        frameRef.current = null;
-        const events = queueRef.current
-          .splice(0)
-          .filter((queued) => queued.generation === generationRef.current)
-          .map((queued) => queued.event);
-        if (mountedRef.current && events.length > 0) {
-          dispatch({ type: "events", events });
-        }
-      };
       if (typeof window.requestAnimationFrame === "function") {
         frameRef.current = {
-          id: window.requestAnimationFrame(flush),
+          id: window.requestAnimationFrame(() => flush(generationRef.current)),
           animationFrame: true,
         };
       } else {
         frameRef.current = {
-          id: window.setTimeout(flush, 16),
+          id: window.setTimeout(() => flush(generationRef.current), 16),
           animationFrame: false,
         };
       }
     },
-    [dispatch, generationRef],
+    [flush, generationRef],
   );
+
+  return useMemo(() => ({ enqueue, flush }), [enqueue, flush]);
 }
 
 function FolderIcon() {
@@ -204,32 +221,78 @@ function AssetRoute({
   phase,
   stage,
   ticketStatus,
+  failedFiles,
+  stageIssues,
 }: {
   phase: RunPhase;
   stage: PipelineStage | null;
   ticketStatus: TicketProgress["status"];
+  failedFiles: number;
+  stageIssues: StageIssueCounts | null;
 }) {
   const activeIndex = stagePosition(stage);
-  const routeComplete =
-    phase === "success" ||
-    (phase === "partialSuccess" && stage === "report" && ticketStatus !== "failed");
+  const recordedErrorCount = STAGES.reduce((total, item) => {
+    const issues = stageIssues?.[item.id];
+    return total + (issues?.errors ?? 0);
+  }, 0);
   return (
     <ol className="asset-route" aria-label="Processing stages">
       {STAGES.map((item, index) => {
-        const state = routeComplete
-          ? "complete"
-          : index < activeIndex
-            ? "complete"
-            : index === activeIndex
-              ? phase === "failed"
-                ? "failed"
-                : "active"
-              : "pending";
+        const issues = stageIssues?.[item.id];
+        const warnings = issues?.warnings ?? 0;
+        const errors = issues?.errors ?? 0;
+        const issueCount = warnings + errors;
+        const current =
+          phase === "running" && index === activeIndex && ticketStatus === null;
+        const failed =
+          index === activeIndex &&
+          (ticketStatus === "failed" ||
+            (phase === "failed" && ticketStatus === null));
+        const fallbackPartialIssue =
+          ticketStatus === "partialSuccess" &&
+          recordedErrorCount === 0 &&
+          index === activeIndex;
+        const reached =
+          (phase === "success" && ticketStatus === null) ||
+          index < activeIndex ||
+          (ticketStatus !== null && index === activeIndex);
+        const state = failed
+          ? "failed"
+          : errors > 0 || fallbackPartialIssue
+            ? "issue"
+            : warnings > 0
+              ? "warning"
+              : reached
+                ? "complete"
+                : current
+                  ? "active"
+                  : "pending";
+        const issueDescription =
+          fallbackPartialIssue
+            ? failedFiles > 0
+              ? `${failedFiles} failed file${failedFiles === 1 ? "" : "s"}`
+              : "errors reported"
+            : issueCount === 0
+              ? "completed with issues"
+              : [
+                  warnings > 0
+                    ? `${warnings} warning${warnings === 1 ? "" : "s"}`
+                    : null,
+                  errors > 0
+                    ? `${errors} error${errors === 1 ? "" : "s"}`
+                    : null,
+                ]
+                  .filter((description) => description !== null)
+                  .join(", ");
         return (
           <li
-            className={`asset-route__stop asset-route__stop--${state}`}
+            className={`asset-route__stop asset-route__stop--${state}${
+              state === "issue" && (errors > 0 || fallbackPartialIssue)
+                ? " asset-route__stop--issue-error"
+                : ""
+            }${current ? " asset-route__stop--current" : ""}`}
             key={item.id}
-            aria-current={state === "active" ? "step" : undefined}
+            aria-current={current ? "step" : undefined}
           >
             <span className="asset-route__rail" aria-hidden="true" />
             <span className="asset-route__node" aria-hidden="true">
@@ -238,9 +301,17 @@ function AssetRoute({
                   <path d="m3 8 3 3 7-7" />
                 </svg>
               ) : String(index + 1).padStart(2, "0")}
+              {issueCount === 0 ? null : (
+                <span className="asset-route__issue-count">{issueCount}</span>
+              )}
             </span>
             <span className="asset-route__label">{item.short}</span>
-            <span className="sr-only">{item.label}: {state}</span>
+            <span className="sr-only">
+              {item.label}:{" "}
+              {state === "issue" || state === "warning"
+                ? issueDescription
+                : state}
+            </span>
           </li>
         );
       })}
@@ -312,9 +383,11 @@ function RunResult({
   const copy =
     fatalError ??
     (phase === "success"
-      ? "Every selected ticket reached the destination and has a report."
+      ? summary !== null && summary.warnings > 0
+        ? "Transfer completed successfully. Warnings remain available for review."
+        : "Every selected ticket reached the destination and has a report."
       : phase === "partialSuccess"
-        ? "Usable output is ready. Review warnings and errors before delivery."
+        ? "Usable output is ready. Review errors and failed files before delivery."
         : "No ticket completed successfully. Review the error log, then start a new run.");
   return (
     <section className={`run-result run-result--${phase}`} aria-labelledby="result-heading" tabIndex={-1}>
@@ -336,10 +409,30 @@ function RunResult({
       </div>
       {summary === null ? null : (
         <dl className="result-totals">
-          <div><dt>Tickets</dt><dd>{summary.totalTickets}</dd></div>
-          <div><dt>Copied</dt><dd>{summary.copiedFiles}</dd></div>
-          <div><dt>Changed</dt><dd>{summary.changedFiles}</dd></div>
-          <div><dt>Issues</dt><dd>{summary.warnings + summary.errors}</dd></div>
+          <div>
+            <dt>Successful tickets</dt>
+            <dd>{summary.successfulTickets}</dd>
+          </div>
+          <div>
+            <dt>Partial tickets</dt>
+            <dd>{summary.partialTickets}</dd>
+          </div>
+          <div>
+            <dt>Failed tickets</dt>
+            <dd>{summary.failedTickets}</dd>
+          </div>
+          <div>
+            <dt>Failed files</dt>
+            <dd>{summary.failedFiles}</dd>
+          </div>
+          <div>
+            <dt>Warnings</dt>
+            <dd>{summary.warnings}</dd>
+          </div>
+          <div>
+            <dt>Errors</dt>
+            <dd>{summary.errors}</dd>
+          </div>
         </dl>
       )}
       <div className="run-result__actions">
@@ -366,7 +459,10 @@ function App() {
   const inputRef = useRef<HTMLInputElement>(null);
   const logExpandButtonRef = useRef<HTMLButtonElement>(null);
   const runGenerationRef = useRef(0);
-  const enqueueEvent = useBatchedEvents(dispatch, runGenerationRef);
+  const { enqueue: enqueueEvent, flush: flushEvents } = useBatchedEvents(
+    dispatch,
+    runGenerationRef,
+  );
   const request = useMemo(
     () => ({ inputPath, outputPath, ticketFilter }),
     [inputPath, outputPath, ticketFilter],
@@ -389,13 +485,30 @@ function App() {
     currentValidation.status === "ready" &&
     summary?.valid === true;
 
-  const completedTickets = run.tickets.filter((ticket) => ticket.status !== null).length;
-  const liveCopied = run.tickets.reduce((total, ticket) => total + ticket.copiedFiles, 0);
-  const liveChanged = run.tickets.reduce((total, ticket) => total + ticket.changedFiles, 0);
-  const liveIssues = run.tickets.reduce(
-    (total, ticket) => total + ticket.warnings + ticket.errors,
-    0,
-  );
+  const liveTotals = useMemo(() => {
+    let completedTickets = 0;
+    let copiedFiles = 0;
+    let changedFiles = 0;
+    let failedFiles = 0;
+    let warnings = run.unscopedWarnings;
+    let errors = run.unscopedErrors;
+    for (const ticket of run.tickets) {
+      if (ticket.status !== null) completedTickets += 1;
+      copiedFiles += ticket.copiedFiles;
+      changedFiles += ticket.changedFiles;
+      failedFiles += ticket.failedFiles;
+      warnings += ticket.warnings;
+      errors += ticket.errors;
+    }
+    return {
+      completedTickets,
+      copiedFiles,
+      changedFiles,
+      failedFiles,
+      warnings,
+      errors,
+    };
+  }, [run.tickets, run.unscopedErrors, run.unscopedWarnings]);
   const currentTicketProgress = run.tickets.find(
     (ticket) => ticket.name === run.currentTicket,
   );
@@ -441,12 +554,17 @@ function App() {
       const result = await startPipeline(request, (pipelineEvent) => {
         if (runGenerationRef.current === generation) {
           enqueueEvent(pipelineEvent, generation);
+          if (pipelineEvent.type === "pipelineCompleted") {
+            flushEvents(generation);
+          }
         }
       });
       if (runGenerationRef.current !== generation) return;
+      flushEvents(generation);
       dispatch({ type: "resolved", summary: result, finishedAt: performance.now() });
     } catch (error) {
       if (runGenerationRef.current !== generation) return;
+      flushEvents(generation);
       dispatch({
         type: "rejected",
         message: nativeErrorMessage(error),
@@ -674,12 +792,43 @@ function App() {
             phase={run.phase}
             stage={run.currentStage}
             ticketStatus={currentTicketProgress?.status ?? null}
+            failedFiles={currentTicketProgress?.failedFiles ?? 0}
+            stageIssues={currentTicketProgress?.stageIssues ?? null}
           />
           <dl className="run-metrics">
-            <div><dt>Tickets</dt><dd>{completedTickets}<span> / {run.totalTickets || summary?.tickets.length || 0}</span></dd></div>
-            <div><dt>Copied</dt><dd>{run.summary?.copiedFiles ?? liveCopied}</dd></div>
-            <div><dt>Optimized</dt><dd>{run.summary?.changedFiles ?? liveChanged}</dd></div>
-            <div><dt>Issues</dt><dd>{run.summary === null ? liveIssues : run.summary.warnings + run.summary.errors}</dd></div>
+            <div>
+              <dt>Tickets</dt>
+              <dd>
+                {run.summary?.totalTickets ?? liveTotals.completedTickets}
+                <span>
+                  {" / "}
+                  {run.totalTickets ||
+                    run.summary?.totalTickets ||
+                    summary?.tickets.length ||
+                    0}
+                </span>
+              </dd>
+            </div>
+            <div>
+              <dt>Copied</dt>
+              <dd>{run.summary?.copiedFiles ?? liveTotals.copiedFiles}</dd>
+            </div>
+            <div>
+              <dt>Optimized</dt>
+              <dd>{run.summary?.changedFiles ?? liveTotals.changedFiles}</dd>
+            </div>
+            <div>
+              <dt>Failed files</dt>
+              <dd>{run.summary?.failedFiles ?? liveTotals.failedFiles}</dd>
+            </div>
+            <div>
+              <dt>Warnings</dt>
+              <dd>{run.summary?.warnings ?? liveTotals.warnings}</dd>
+            </div>
+            <div>
+              <dt>Errors</dt>
+              <dd>{run.summary?.errors ?? liveTotals.errors}</dd>
+            </div>
           </dl>
         </section>
 

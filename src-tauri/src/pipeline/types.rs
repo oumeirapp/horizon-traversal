@@ -79,5 +79,4 @@ pub struct ProcessingOutcome {
     pub processed: usize,
     pub changed: usize,
     pub failed_files: usize,
-    pub notices: Vec<PipelineNotice>,
 }

@@ -248,8 +248,12 @@ fn process_ticket(
     }
 
     stage(events, &ticket_name, PipelineStage::Pdf);
-    match convert_pdfs(&ticket_output, pdfium) {
-        Ok(outcome) => absorb_processing(events, &ticket_name, &mut result, outcome),
+    let pdf_outcome = {
+        let mut on_notice = |notice| absorb_notice(events, &ticket_name, &mut result, notice);
+        convert_pdfs(&ticket_output, pdfium, &mut on_notice)
+    };
+    match pdf_outcome {
+        Ok(outcome) => absorb_processing(&mut result, outcome),
         Err(error) => ticket_log(
             events,
             &ticket_name,
@@ -261,8 +265,12 @@ fn process_ticket(
     }
 
     stage(events, &ticket_name, PipelineStage::Images);
-    match resize_images(&ticket_output) {
-        Ok(outcome) => absorb_processing(events, &ticket_name, &mut result, outcome),
+    let image_outcome = {
+        let mut on_notice = |notice| absorb_notice(events, &ticket_name, &mut result, notice);
+        resize_images(&ticket_output, &mut on_notice)
+    };
+    match image_outcome {
+        Ok(outcome) => absorb_processing(&mut result, outcome),
         Err(error) => ticket_log(
             events,
             &ticket_name,
@@ -274,8 +282,12 @@ fn process_ticket(
     }
 
     stage(events, &ticket_name, PipelineStage::Video);
-    match resize_videos(&ticket_output, media_tools) {
-        Ok(outcome) => absorb_processing(events, &ticket_name, &mut result, outcome),
+    let video_outcome = {
+        let mut on_notice = |notice| absorb_notice(events, &ticket_name, &mut result, notice);
+        resize_videos(&ticket_output, media_tools, &mut on_notice)
+    };
+    match video_outcome {
+        Ok(outcome) => absorb_processing(&mut result, outcome),
         Err(error) => ticket_log(
             events,
             &ticket_name,
@@ -338,15 +350,9 @@ fn absorb_collection(
     absorb_notices(events, ticket, result, outcome.notices);
 }
 
-fn absorb_processing(
-    events: &impl PipelineEventSink,
-    ticket: &str,
-    result: &mut TicketResult,
-    outcome: ProcessingOutcome,
-) {
+fn absorb_processing(result: &mut TicketResult, outcome: ProcessingOutcome) {
     result.changed_files += outcome.changed;
     result.failed_files += outcome.failed_files;
-    absorb_notices(events, ticket, result, outcome.notices);
 }
 
 fn absorb_notices(
@@ -356,21 +362,30 @@ fn absorb_notices(
     notices: Vec<PipelineNotice>,
 ) {
     for notice in notices {
-        let level = match notice.level {
-            NoticeLevel::Info => LogLevel::Info,
-            NoticeLevel::Success => LogLevel::Success,
-            NoticeLevel::Warning => LogLevel::Warning,
-            NoticeLevel::Error => LogLevel::Error,
-        };
-        ticket_log(
-            events,
-            ticket,
-            result,
-            level,
-            notice.message,
-            notice.path.as_deref(),
-        );
+        absorb_notice(events, ticket, result, notice);
     }
+}
+
+fn absorb_notice(
+    events: &impl PipelineEventSink,
+    ticket: &str,
+    result: &mut TicketResult,
+    notice: PipelineNotice,
+) {
+    let level = match notice.level {
+        NoticeLevel::Info => LogLevel::Info,
+        NoticeLevel::Success => LogLevel::Success,
+        NoticeLevel::Warning => LogLevel::Warning,
+        NoticeLevel::Error => LogLevel::Error,
+    };
+    ticket_log(
+        events,
+        ticket,
+        result,
+        level,
+        notice.message,
+        notice.path.as_deref(),
+    );
 }
 
 fn finish_ticket(
@@ -379,12 +394,12 @@ fn finish_ticket(
     mut result: TicketResult,
     elapsed: Duration,
 ) -> TicketResult {
-    result.status = if !result.report_written {
-        RunStatus::Failed
-    } else if result.failed_files > 0 || result.warnings > 0 || result.errors > 0 {
+    result.status = if result.errors == 0 {
+        RunStatus::Success
+    } else if result.report_written {
         RunStatus::PartialSuccess
     } else {
-        RunStatus::Success
+        RunStatus::Failed
     };
     events.emit(PipelineEvent::TicketCompleted {
         ticket,

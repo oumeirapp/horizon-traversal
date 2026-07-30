@@ -56,6 +56,36 @@ fn run_ffmpeg(runner: &ProcessRunner, arguments: &[&str]) {
     );
 }
 
+fn extract_aac_audio(runner: &ProcessRunner, path: &Path) -> Vec<u8> {
+    let arguments = [
+        "-v",
+        "error",
+        "-i",
+        path.to_str().unwrap(),
+        "-map",
+        "0:a:0",
+        "-c:a",
+        "copy",
+        "-f",
+        "adts",
+        "pipe:1",
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect::<Vec<_>>();
+    let output = runner.run(NativeTool::Ffmpeg, &arguments).unwrap();
+    assert!(
+        output.success,
+        "audio extraction failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !output.stdout.is_empty(),
+        "audio stream contains no packets"
+    );
+    output.stdout
+}
+
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 #[test]
 fn bundled_tools_resize_audio_and_silent_video_and_leave_failures_untouched() {
@@ -138,10 +168,12 @@ fn bundled_tools_resize_audio_and_silent_video_and_leave_failures_untouched() {
         ],
     );
     fs::write(&corrupt, b"not a video").unwrap();
+    let source_audio = extract_aac_audio(&runner, &with_audio);
     let in_bounds_before = fs::read(&in_bounds).unwrap();
     let corrupt_before = fs::read(&corrupt).unwrap();
 
-    let outcome = resize_videos(&folder, &runner).unwrap();
+    let mut notices = Vec::new();
+    let outcome = resize_videos(&folder, &runner, &mut |notice| notices.push(notice)).unwrap();
 
     assert_eq!(outcome.processed, 3);
     assert_eq!(outcome.changed, 2);
@@ -155,6 +187,10 @@ fn bundled_tools_resize_audio_and_silent_video_and_leave_failures_untouched() {
         (1_280, 720)
     );
     assert_eq!(audio_metadata.audio_streams, 1);
+    assert_eq!(extract_aac_audio(&runner, &with_audio), source_audio);
+    assert!(notices
+        .iter()
+        .any(|notice| notice.message.contains("audio preserved")));
     let silent_metadata = probe_video(&runner, &silent).unwrap();
     assert_eq!(
         (
@@ -205,9 +241,16 @@ fn failed_encoding_preserves_source_and_removes_partial_output() {
     let source = temp.path().join("source.mp4");
     fs::write(&source, b"original source bytes").unwrap();
 
-    let outcome = resize_videos(temp.path(), &FailingEncodeRunner).unwrap();
+    let mut notices = Vec::new();
+    let outcome = resize_videos(temp.path(), &FailingEncodeRunner, &mut |notice| {
+        notices.push(notice)
+    })
+    .unwrap();
 
     assert_eq!(outcome.failed_files, 1);
+    assert_eq!(notices.len(), 2);
+    assert_eq!(notices[0].message, "Processing video: source.mp4");
+    assert!(notices[1].message.starts_with("Failed to resize video "));
     assert_eq!(fs::read(&source).unwrap(), b"original source bytes");
     assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
 }
@@ -260,7 +303,8 @@ fn missing_post_encode_audio_rolls_back_to_the_source() {
         probe_count: AtomicUsize::new(0),
     };
 
-    let outcome = resize_videos(temp.path(), &runner).unwrap();
+    let mut notices = Vec::new();
+    let outcome = resize_videos(temp.path(), &runner, &mut |notice| notices.push(notice)).unwrap();
 
     assert_eq!(outcome.failed_files, 1);
     assert_eq!(fs::read(&source).unwrap(), b"source with audio");
