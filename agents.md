@@ -1,8 +1,8 @@
 # AGENTS.md
 
-# X Traversal
+# Horizon Traversal
 
-X Traversal is a Tauri v2 desktop application for collecting approved assets
+Horizon Traversal is a Tauri v2 desktop application for collecting approved assets
 from ticket folders. React/TypeScript owns presentation; Rust owns validation,
 filesystem traversal, media processing, reports, run state, and native tools.
 
@@ -38,6 +38,8 @@ cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-f
 
 - Preserve the deterministic stage order: discover, copy, PDF, images, video,
   report.
+- Keep PDF, image, and video optimization independently selectable per run,
+  with all three enabled by default.
 - Keep output flat and isolated per ticket; do not change collision naming or
   report scope without an explicit requirement.
 - Keep `src-tauri/src/main.rs` thin and application setup in `lib.rs`.

@@ -7,6 +7,26 @@ pub struct SelectionRequest {
     pub output_path: String,
     #[serde(default)]
     pub ticket_filter: String,
+    #[serde(default)]
+    pub processing_options: ProcessingOptions,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ProcessingOptions {
+    pub pdf: bool,
+    pub images: bool,
+    pub video: bool,
+}
+
+impl Default for ProcessingOptions {
+    fn default() -> Self {
+        Self {
+            pdf: true,
+            images: true,
+            video: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -175,13 +195,51 @@ mod tests {
         let request: SelectionRequest = serde_json::from_value(json!({
             "inputPath": "/tickets",
             "outputPath": "/exports",
-            "ticketFilter": "P1-P3"
+            "ticketFilter": "P1-P3",
+            "processingOptions": {
+                "pdf": false,
+                "images": true,
+                "video": false
+            }
         }))
         .unwrap();
 
         assert_eq!(request.input_path, "/tickets");
         assert_eq!(request.output_path, "/exports");
         assert_eq!(request.ticket_filter, "P1-P3");
+        assert_eq!(
+            request.processing_options,
+            ProcessingOptions {
+                pdf: false,
+                images: true,
+                video: false,
+            }
+        );
+    }
+
+    #[test]
+    fn request_defaults_all_processing_options_to_enabled() {
+        let request: SelectionRequest = serde_json::from_value(json!({
+            "inputPath": "/tickets",
+            "outputPath": "/exports"
+        }))
+        .unwrap();
+
+        assert_eq!(request.processing_options, ProcessingOptions::default());
+
+        let partial_request: SelectionRequest = serde_json::from_value(json!({
+            "inputPath": "/tickets",
+            "outputPath": "/exports",
+            "processingOptions": { "pdf": false }
+        }))
+        .unwrap();
+        assert_eq!(
+            partial_request.processing_options,
+            ProcessingOptions {
+                pdf: false,
+                ..ProcessingOptions::default()
+            }
+        );
     }
 
     #[test]

@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use tempfile::tempdir;
-use x_traversal_lib::pipeline::videos::{
+use horizon_traversal_lib::pipeline::videos::{
     probe_video, resize_videos, MediaToolRunner, NativeTool, ToolOutput, ToolRunError,
 };
+use tempfile::tempdir;
 
 struct ProcessRunner {
     ffmpeg: PathBuf,
@@ -206,7 +206,7 @@ fn bundled_tools_resize_audio_and_silent_video_and_leave_failures_untouched() {
         .unwrap()
         .file_name()
         .to_string_lossy()
-        .contains("x-traversal")));
+        .contains("horizon-traversal")));
 }
 
 struct FailingEncodeRunner;

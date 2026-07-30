@@ -3,12 +3,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use horizon_traversal_lib::pipeline::coordinator::{run_pipeline, PipelineEventSink, PipelinePlan};
+use horizon_traversal_lib::pipeline::ipc::{
+    LogLevel, PipelineEvent, PipelineStage, PipelineSummary, ProcessingOptions, RunStatus,
+};
+use horizon_traversal_lib::pipeline::native::resolve_pdfium_library;
+use horizon_traversal_lib::pipeline::pdf::shared_pdfium;
+use horizon_traversal_lib::pipeline::videos::{
+    MediaToolRunner, NativeTool, ToolOutput, ToolRunError,
+};
 use tempfile::tempdir;
-use x_traversal_lib::pipeline::coordinator::{run_pipeline, PipelineEventSink, PipelinePlan};
-use x_traversal_lib::pipeline::ipc::{PipelineEvent, PipelineStage, PipelineSummary, RunStatus};
-use x_traversal_lib::pipeline::native::resolve_pdfium_library;
-use x_traversal_lib::pipeline::pdf::shared_pdfium;
-use x_traversal_lib::pipeline::videos::{MediaToolRunner, NativeTool, ToolOutput, ToolRunError};
 
 #[derive(Default)]
 struct RecordingEvents(Mutex<Vec<PipelineEvent>>);
@@ -48,13 +52,14 @@ fn plan(input: PathBuf, output: PathBuf, tickets: Vec<PathBuf>) -> PipelinePlan 
         input,
         output,
         tickets,
+        processing_options: ProcessingOptions::default(),
     }
 }
 
 fn run(plan: PipelinePlan, events: &RecordingEvents) -> PipelineSummary {
     let library = resolve_pdfium_library(None).unwrap();
     let pdfium = shared_pdfium(&library).unwrap();
-    run_pipeline(plan, pdfium, &UnexpectedMediaTools, events)
+    run_pipeline(plan, Some(pdfium), &UnexpectedMediaTools, events)
 }
 
 fn structural_events(events: &[PipelineEvent]) -> Vec<String> {
@@ -106,6 +111,69 @@ fn expected_ticket_events(ticket: &str, status: &str) -> Vec<String> {
     );
     expected.push(format!("ticket:complete:{ticket}:{status}"));
     expected
+}
+
+#[test]
+fn disabled_processing_stages_keep_stage_order_and_skip_all_processors() {
+    let temp = tempdir().unwrap();
+    let input = temp.path().join("input");
+    let output = temp.path().join("output");
+    let ticket = input.join("P1 Unoptimized");
+    let source = ticket.join("Deliverables");
+    write(&source.join("document.pdf"), b"not a PDF fixture");
+    write(&source.join("poster.jpg"), b"not a JPEG fixture");
+    write(&source.join("clip.mp4"), b"not an MP4 fixture");
+
+    let mut pipeline_plan = plan(input, output.clone(), vec![ticket]);
+    pipeline_plan.processing_options = ProcessingOptions {
+        pdf: false,
+        images: false,
+        video: false,
+    };
+    let events = RecordingEvents::default();
+    let summary = run_pipeline(pipeline_plan, None, &UnexpectedMediaTools, &events);
+    let recorded = events.snapshot();
+
+    assert_eq!(summary.status, RunStatus::Success);
+    assert_eq!(summary.copied_files, 3);
+    assert_eq!(summary.changed_files, 0);
+    assert_eq!(summary.failed_files, 0);
+    let mut expected = vec!["pipeline:start:1".to_owned()];
+    expected.extend(expected_ticket_events("P1 Unoptimized", "success"));
+    expected.push("pipeline:complete:success".to_owned());
+    assert_eq!(structural_events(&recorded), expected);
+
+    let skip_logs = recorded
+        .iter()
+        .filter_map(|event| match event {
+            PipelineEvent::Log {
+                level: LogLevel::Info,
+                message,
+                ..
+            } if message.contains("optimization disabled for this run") => Some(message.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        skip_logs,
+        [
+            "PDF optimization disabled for this run; skipped",
+            "Image optimization disabled for this run; skipped",
+            "Video optimization disabled for this run; skipped",
+        ]
+    );
+    assert_eq!(
+        fs::read(output.join("P1 Unoptimized/document.pdf")).unwrap(),
+        b"not a PDF fixture"
+    );
+    assert_eq!(
+        fs::read(output.join("P1 Unoptimized/poster.jpg")).unwrap(),
+        b"not a JPEG fixture"
+    );
+    assert_eq!(
+        fs::read(output.join("P1 Unoptimized/clip.mp4")).unwrap(),
+        b"not an MP4 fixture"
+    );
 }
 
 #[test]

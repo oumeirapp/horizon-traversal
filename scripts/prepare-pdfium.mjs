@@ -56,7 +56,7 @@ if ((await fileExists(DESTINATION)) && (await sha256(DESTINATION)) === LIBRARY_S
 }
 
 const temporaryDirectory = await mkdtemp(
-  path.join(tmpdir(), "x-traversal-pdfium-"),
+  path.join(tmpdir(), "horizon-traversal-pdfium-"),
 );
 
 try {

@@ -1,6 +1,6 @@
 # Native media third-party notices
 
-The X Traversal application launches FFmpeg and FFprobe as separate bundled
+The Horizon Traversal application launches FFmpeg and FFprobe as separate bundled
 programs. The native programs described here are not linked into the Rust or
 React application.
 

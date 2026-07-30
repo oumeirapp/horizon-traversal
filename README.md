@@ -1,6 +1,6 @@
-# X Traversal
+# Horizon Traversal
 
-X Traversal is a Tauri desktop application that collects approved assets from
+Horizon Traversal is a Tauri desktop application that collects approved assets from
 ticket folders and prepares them for delivery. It discovers source folders,
 copies supported files into flat per-ticket outputs, converts PDFs, resizes
 images and videos, and writes a source-path report.
@@ -19,6 +19,11 @@ The processing order is fixed and deterministic:
 4. Resize images
 5. Resize videos
 6. Generate the ticket report
+
+PDF conversion, image resizing, and video resizing can be enabled independently
+for each run. All three optimizations are enabled by default; disabled stages
+remain visible in the route, log that they were skipped, and leave the copied
+assets unchanged.
 
 The React webview can call only three typed Rust commands: selection
 validation, pipeline execution with a scoped event channel, and opening the

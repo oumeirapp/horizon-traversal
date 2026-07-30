@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: x-traversal-${{ github.workflow }}-${{ github.ref }}
+  group: horizon-traversal-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -111,7 +111,7 @@ jobs:
       - name: Build and run packaged workflow smoke
         run: npm run smoke:package
         env:
-          X_TRAVERSAL_SMOKE_REPORT_PATH: ${{ github.workspace }}/dist/packaged-smoke-report.json
+          HORIZON_TRAVERSAL_SMOKE_REPORT_PATH: ${{ github.workspace }}/dist/packaged-smoke-report.json
       - run: npm run prepare:source-offer
       - name: Verify corresponding-source archive
         working-directory: dist/native-source-offer
@@ -119,17 +119,17 @@ jobs:
       - name: Archive smoke bundle and corresponding source
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
-            "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/X Traversal.app" \
-            "dist/X-Traversal-smoke-app.zip"
+            "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Horizon Traversal.app" \
+            "dist/Horizon-Traversal-smoke-app.zip"
           ditto -c -k --keepParent \
             "dist/native-source-offer" \
-            "dist/X-Traversal-native-source.zip"
+            "dist/Horizon-Traversal-native-source.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: x-traversal-packaged-smoke-not-for-release
+          name: horizon-traversal-packaged-smoke-not-for-release
           path: |
-            dist/X-Traversal-smoke-app.zip
-            dist/X-Traversal-native-source.zip
+            dist/Horizon-Traversal-smoke-app.zip
+            dist/Horizon-Traversal-native-source.zip
             dist/packaged-smoke-report.json
           if-no-files-found: error
           retention-days: 7

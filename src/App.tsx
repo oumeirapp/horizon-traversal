@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type CSSProperties,
   type FormEvent,
   type MutableRefObject,
 } from "react";
@@ -17,6 +18,7 @@ import {
   validateSelection,
   type PipelineEvent,
   type PipelineStage,
+  type ProcessingOptions,
   type SelectionRequest,
   type SelectionSummary,
   type ValidationIssue,
@@ -39,6 +41,38 @@ const STAGES: Array<{ id: PipelineStage; label: string; short: string }> = [
   { id: "report", label: "Write report", short: "Report" },
 ];
 
+const DEFAULT_PROCESSING_OPTIONS: ProcessingOptions = {
+  pdf: true,
+  images: true,
+  video: true,
+};
+
+const PROCESSING_OPTION_CONTROLS: Array<{
+  id: keyof ProcessingOptions;
+  label: string;
+  detail: string;
+  accessibleLabel: string;
+}> = [
+  {
+    id: "pdf",
+    label: "PDF",
+    detail: "Convert",
+    accessibleLabel: "Optimize PDFs",
+  },
+  {
+    id: "images",
+    label: "Images",
+    detail: "Resize",
+    accessibleLabel: "Optimize images",
+  },
+  {
+    id: "video",
+    label: "Video",
+    detail: "Resize",
+    accessibleLabel: "Optimize video",
+  },
+];
+
 interface ValidationState {
   status: "idle" | "pending" | "ready" | "error";
   key: string;
@@ -53,8 +87,24 @@ const initialValidation: ValidationState = {
   error: null,
 };
 
+const STAGE_OPTION: Partial<
+  Record<PipelineStage, keyof ProcessingOptions>
+> = {
+  pdf: "pdf",
+  images: "images",
+  video: "video",
+};
+
+function selectedStages(options: ProcessingOptions) {
+  return STAGES.filter((stage) => {
+    const option = STAGE_OPTION[stage.id];
+    return option === undefined || options[option];
+  });
+}
+
 function requestKey(request: SelectionRequest) {
-  return `${request.inputPath}\u0000${request.outputPath}\u0000${request.ticketFilter}`;
+  const { pdf, images, video } = request.processingOptions;
+  return `${request.inputPath}\u0000${request.outputPath}\u0000${request.ticketFilter}\u0000${Number(pdf)}${Number(images)}${Number(video)}`;
 }
 
 function nativeErrorMessage(error: unknown) {
@@ -85,7 +135,8 @@ function useSelectionValidation(
   const [state, setState] = useState<ValidationState>(initialValidation);
   const versionRef = useRef(0);
   const key = requestKey(request);
-  const { inputPath, outputPath, ticketFilter } = request;
+  const { inputPath, outputPath, ticketFilter, processingOptions } = request;
+  const { pdf, images, video } = processingOptions;
 
   useEffect(() => {
     versionRef.current += 1;
@@ -99,7 +150,12 @@ function useSelectionValidation(
 
     setState({ status: "pending", key, summary: null, error: null });
     const timer = window.setTimeout(() => {
-      void validateSelection({ inputPath, outputPath, ticketFilter })
+      void validateSelection({
+        inputPath,
+        outputPath,
+        ticketFilter,
+        processingOptions: { pdf, images, video },
+      })
         .then((summary) => {
           if (versionRef.current !== version) return;
           setState({ status: "ready", key, summary, error: null });
@@ -116,7 +172,7 @@ function useSelectionValidation(
     }, 350);
 
     return () => window.clearTimeout(timer);
-  }, [inputPath, key, outputPath, paused, ticketFilter]);
+  }, [images, inputPath, key, outputPath, paused, pdf, ticketFilter, video]);
 
   return state;
 }
@@ -205,6 +261,26 @@ function ArrowIcon() {
   );
 }
 
+function ResetIcon() {
+  return (
+    <svg
+      className="lucide lucide-rotate-ccw"
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+    </svg>
+  );
+}
+
 function FieldIssue({ issue }: { issue: ValidationIssue | undefined }) {
   return issue === undefined ? null : (
     <p className="field-message field-message--error" role="alert">
@@ -218,12 +294,14 @@ function stagePosition(stage: PipelineStage | null) {
 }
 
 function AssetRoute({
+  stages,
   phase,
   stage,
   ticketStatus,
   failedFiles,
   stageIssues,
 }: {
+  stages: typeof STAGES;
   phase: RunPhase;
   stage: PipelineStage | null;
   ticketStatus: TicketProgress["status"];
@@ -231,31 +309,36 @@ function AssetRoute({
   stageIssues: StageIssueCounts | null;
 }) {
   const activeIndex = stagePosition(stage);
-  const recordedErrorCount = STAGES.reduce((total, item) => {
+  const recordedErrorCount = stages.reduce((total, item) => {
     const issues = stageIssues?.[item.id];
     return total + (issues?.errors ?? 0);
   }, 0);
   return (
-    <ol className="asset-route" aria-label="Processing stages">
-      {STAGES.map((item, index) => {
+    <ol
+      className="asset-route"
+      aria-label="Processing stages"
+      style={{ "--route-stage-count": stages.length } as CSSProperties}
+    >
+      {stages.map((item, index) => {
+        const stageIndex = stagePosition(item.id);
         const issues = stageIssues?.[item.id];
         const warnings = issues?.warnings ?? 0;
         const errors = issues?.errors ?? 0;
         const issueCount = warnings + errors;
         const current =
-          phase === "running" && index === activeIndex && ticketStatus === null;
+          phase === "running" && stageIndex === activeIndex && ticketStatus === null;
         const failed =
-          index === activeIndex &&
+          stageIndex === activeIndex &&
           (ticketStatus === "failed" ||
             (phase === "failed" && ticketStatus === null));
         const fallbackPartialIssue =
           ticketStatus === "partialSuccess" &&
           recordedErrorCount === 0 &&
-          index === activeIndex;
+          stageIndex === activeIndex;
         const reached =
           (phase === "success" && ticketStatus === null) ||
-          index < activeIndex ||
-          (ticketStatus !== null && index === activeIndex);
+          stageIndex < activeIndex ||
+          (ticketStatus !== null && stageIndex === activeIndex);
         const state = failed
           ? "failed"
           : errors > 0 || fallbackPartialIssue
@@ -384,11 +467,27 @@ function RunResult({
     fatalError ??
     (phase === "success"
       ? summary !== null && summary.warnings > 0
-        ? "Transfer completed successfully. Warnings remain available for review."
-        : "Every selected ticket reached the destination and has a report."
+        ? "Files are ready. Warnings remain available in the activity log."
+        : "Files are ready in your output folder."
       : phase === "partialSuccess"
         ? "Usable output is ready. Review errors and failed files before delivery."
         : "No ticket completed successfully. Review the error log, then start a new run.");
+  const summaryFacts =
+    summary === null
+      ? []
+      : [
+          `${summary.totalTickets} ${summary.totalTickets === 1 ? "ticket" : "tickets"} processed`,
+          `${summary.errors} ${summary.errors === 1 ? "error" : "errors"}`,
+          ...(summary.failedFiles > 0
+            ? [
+                `${summary.failedFiles} ${summary.failedFiles === 1 ? "failed file" : "failed files"}`,
+              ]
+            : []),
+          ...(summary.warnings > 0
+            ? [`${summary.warnings} ${summary.warnings === 1 ? "warning" : "warnings"}`]
+            : []),
+          formatDuration(summary.elapsedMs),
+        ];
   return (
     <section className={`run-result run-result--${phase}`} aria-labelledby="result-heading" tabIndex={-1}>
       <div className="run-result__mark" aria-hidden="true">
@@ -402,46 +501,28 @@ function RunResult({
           )}
         </svg>
       </div>
-      <div>
-        <p className="section-kicker">Run outcome</p>
+      <div className="run-result__body">
         <h2 id="result-heading">{title}</h2>
-        <p>{copy}</p>
+        {summaryFacts.length === 0 ? null : (
+          <p className="run-result__summary">{summaryFacts.join(" · ")}</p>
+        )}
+        <p className="run-result__copy">{copy}</p>
       </div>
-      {summary === null ? null : (
-        <dl className="result-totals">
-          <div>
-            <dt>Successful tickets</dt>
-            <dd>{summary.successfulTickets}</dd>
-          </div>
-          <div>
-            <dt>Partial tickets</dt>
-            <dd>{summary.partialTickets}</dd>
-          </div>
-          <div>
-            <dt>Failed tickets</dt>
-            <dd>{summary.failedTickets}</dd>
-          </div>
-          <div>
-            <dt>Failed files</dt>
-            <dd>{summary.failedFiles}</dd>
-          </div>
-          <div>
-            <dt>Warnings</dt>
-            <dd>{summary.warnings}</dd>
-          </div>
-          <div>
-            <dt>Errors</dt>
-            <dd>{summary.errors}</dd>
-          </div>
-        </dl>
-      )}
       <div className="run-result__actions">
         {summary === null ? null : (
-          <button type="button" className="button button--secondary" onClick={onOpen} disabled={opening}>
+          <button
+            type="button"
+            className="button button--primary run-result__open"
+            onClick={onOpen}
+            disabled={opening}
+          >
             <FolderIcon /> {opening ? "Opening…" : "Open output"}
           </button>
         )}
-        <button type="button" className="button button--quiet" onClick={onReset}>New run</button>
+        <button type="button" className="run-result__reset" onClick={onReset}>
+          <ResetIcon />
+          <span>Start another run</span>
+        </button>
       </div>
     </section>
   );
@@ -451,6 +532,9 @@ function App() {
   const [inputPath, setInputPath] = useState("");
   const [outputPath, setOutputPath] = useState("");
   const [ticketFilter, setTicketFilter] = useState("");
+  const [processingOptions, setProcessingOptions] = useState<ProcessingOptions>(
+    DEFAULT_PROCESSING_OPTIONS,
+  );
   const [run, dispatch] = useReducer(runReducer, undefined, createInitialRunState);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
@@ -464,8 +548,8 @@ function App() {
     runGenerationRef,
   );
   const request = useMemo(
-    () => ({ inputPath, outputPath, ticketFilter }),
-    [inputPath, outputPath, ticketFilter],
+    () => ({ inputPath, outputPath, ticketFilter, processingOptions }),
+    [inputPath, outputPath, processingOptions, ticketFilter],
   );
   const running = run.phase === "running";
   const configurationLocked = run.phase !== "idle";
@@ -512,6 +596,7 @@ function App() {
   const currentTicketProgress = run.tickets.find(
     (ticket) => ticket.name === run.currentTicket,
   );
+  const activeStages = selectedStages(processingOptions);
 
   useEffect(() => {
     if (!logsExpanded) return;
@@ -593,6 +678,13 @@ function App() {
     queueMicrotask(() => inputRef.current?.focus());
   }
 
+  function setProcessingOption(
+    option: keyof ProcessingOptions,
+    enabled: boolean,
+  ) {
+    setProcessingOptions((current) => ({ ...current, [option]: enabled }));
+  }
+
   const toggleLogs = useCallback(() => setLogsExpanded((expanded) => !expanded), []);
   const statusLabel =
     run.phase === "running"
@@ -629,7 +721,7 @@ function App() {
             <img src="/horizon%20traversal%20transparent.png" width="40" height="40" alt="" />
           </span>
           <div>
-            <h1>X Traversal</h1>
+            <h1>Horizon Traversal</h1>
             <p>Approved asset transfer</p>
           </div>
         </div>
@@ -734,6 +826,39 @@ function App() {
               </div>
             </div>
 
+            <fieldset className="processing-options" disabled={configurationLocked}>
+              <legend className="sr-only">Asset optimization</legend>
+              <div className="processing-options__intro">
+                <strong>Asset optimization</strong>
+                <p id="processing-options-help">Choose formats to optimize after copying.</p>
+              </div>
+              <div className="processing-options__controls">
+                {PROCESSING_OPTION_CONTROLS.map((option) => (
+                  <label className="processing-option" key={option.id}>
+                    <span className="processing-option__copy">
+                      <strong>{option.label}</strong>
+                      <small>
+                        {processingOptions[option.id] ? option.detail : "Copy only"}
+                      </small>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={processingOptions[option.id]}
+                      onChange={(event) =>
+                        setProcessingOption(option.id, event.target.checked)
+                      }
+                      disabled={configurationLocked}
+                      aria-label={option.accessibleLabel}
+                      aria-describedby="processing-options-help"
+                    />
+                    <span className="processing-option__switch" aria-hidden="true">
+                      <span />
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
             {dialogError === null ? null : <p className="form-alert" role="alert">{dialogError}</p>}
             {currentValidation.error === null ? null : (
               <p className="form-alert" role="alert">{currentValidation.error}</p>
@@ -758,7 +883,7 @@ function App() {
                   : running
                     ? "Keep this window open while assets move."
                     : configurationLocked
-                      ? "Choose New run to prepare another transfer."
+                      ? "Choose Start another run to prepare another transfer."
                       : "A valid route is required before processing."}
               </p>
             </div>
@@ -774,7 +899,7 @@ function App() {
               </h2>
               <p>
                 {run.phase === "idle"
-                  ? "Six deterministic stages, one ticket at a time."
+                  ? `${activeStages.length} selected stages, one ticket at a time.`
                   : run.currentStage === null
                     ? "Preparing the next ticket"
                     : STAGES.find((stage) => stage.id === run.currentStage)?.label}
@@ -789,6 +914,7 @@ function App() {
           </div>
 
           <AssetRoute
+            stages={activeStages}
             phase={run.phase}
             stage={run.currentStage}
             ticketStatus={currentTicketProgress?.status ?? null}

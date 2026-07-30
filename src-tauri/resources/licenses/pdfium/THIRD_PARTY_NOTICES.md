@@ -1,6 +1,6 @@
 # PDFium native-library notice
 
-X Traversal bundles the Apple Silicon PDFium shared library described below.
+Horizon Traversal bundles the Apple Silicon PDFium shared library described below.
 The Python modules from the wheel are not bundled.
 
 - PDFium version: `151.0.7920.0`

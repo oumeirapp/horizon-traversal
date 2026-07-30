@@ -22,5 +22,5 @@ pub fn run() {
 
     builder
         .run(tauri::generate_context!())
-        .expect("error while running X Traversal");
+        .expect("error while running Horizon Traversal");
 }

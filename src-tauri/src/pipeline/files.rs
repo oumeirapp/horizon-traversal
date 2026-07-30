@@ -17,7 +17,7 @@ pub fn create_temporary_file(destination: &Path) -> io::Result<(PathBuf, File)> 
     for counter in 0_u32..1_000 {
         let mut temporary_name = OsString::from(".");
         temporary_name.push(file_name);
-        temporary_name.push(format!(".x-traversal-{counter}.tmp"));
+        temporary_name.push(format!(".horizon-traversal-{counter}.tmp"));
         let temporary_path = parent.join(temporary_name);
         match OpenOptions::new()
             .write(true)
@@ -60,7 +60,7 @@ pub fn replace_file(temporary: &Path, destination: &Path) -> io::Result<()> {
         .map(|counter| {
             let mut backup_name = OsString::from(".");
             backup_name.push(file_name);
-            backup_name.push(format!(".x-traversal-backup-{counter}"));
+            backup_name.push(format!(".horizon-traversal-backup-{counter}"));
             parent.join(backup_name)
         })
         .find(|candidate| candidate.symlink_metadata().is_err())

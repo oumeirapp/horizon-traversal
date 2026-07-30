@@ -69,7 +69,7 @@
   "distributionFiles": [
     {
       "path": "src-tauri/binaries/THIRD_PARTY_NOTICES.md",
-      "sha256": "147091ee5d06ea5bfcfcc021cd3a9488e104b4e5996f169dff22b02c03fb07a8"
+      "sha256": "992c39516ecd27801de25be5b41c751463d21c95931649ab0f20a24ff640a8cd"
     },
     {
       "path": "src-tauri/binaries/licenses/GPL-2.0-or-later.txt",
@@ -77,7 +77,7 @@
     },
     {
       "path": "src-tauri/resources/licenses/pdfium/THIRD_PARTY_NOTICES.md",
-      "sha256": "d2ca98335613665e9b61aa0d08694821ff644569c5078cc88983174f94278b4f"
+      "sha256": "fe6e05ac6f7972c706816e9ef9df7670e22d62461f440ec3d701922a74651811"
     },
     {
       "path": "src-tauri/resources/licenses/pdfium/wheel/LICENSES/Apache-2.0.txt",

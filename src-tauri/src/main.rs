@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    x_traversal_lib::run()
+    horizon_traversal_lib::run()
 }

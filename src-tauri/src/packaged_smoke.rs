@@ -21,14 +21,14 @@ use tauri::{App, AppHandle, Manager, Runtime};
 use crate::commands::validate_request;
 use crate::pipeline::coordinator::{run_pipeline, PipelineEventSink};
 use crate::pipeline::ipc::{
-    PipelineEvent, PipelineSummary, RunStatus, SelectionRequest, ValidationIssue,
+    PipelineEvent, PipelineSummary, ProcessingOptions, RunStatus, SelectionRequest, ValidationIssue,
 };
 use crate::pipeline::native::resolve_pdfium_library;
 use crate::pipeline::pdf::shared_pdfium;
 use crate::pipeline::selection::validate_roots;
 use crate::pipeline::videos::TauriMediaToolRunner;
 
-pub const REQUEST_ENV: &str = "X_TRAVERSAL_PACKAGED_SMOKE_REQUEST";
+pub const REQUEST_ENV: &str = "HORIZON_TRAVERSAL_PACKAGED_SMOKE_REQUEST";
 
 const REPORT_SCHEMA_VERSION: u8 = 1;
 const FAILURE_EXIT_CODE: i32 = 2;
@@ -47,6 +47,7 @@ struct SelectionSnapshot {
     input_path: String,
     output_path: String,
     ticket_filter: String,
+    processing_options: ProcessingOptions,
 }
 
 impl From<&SelectionRequest> for SelectionSnapshot {
@@ -55,6 +56,7 @@ impl From<&SelectionRequest> for SelectionSnapshot {
             input_path: request.input_path.clone(),
             output_path: request.output_path.clone(),
             ticket_filter: request.ticket_filter.clone(),
+            processing_options: request.processing_options,
         }
     }
 }
@@ -237,11 +239,17 @@ fn execute_pipeline<R: Runtime>(
         .resource_dir()
         .map_err(|error| SmokeFailure::new("resources", error.to_string()))?;
     native_assets.resource_directory = Some(resource_directory.to_string_lossy().into_owned());
-    let pdfium_path = resolve_pdfium_library(Some(&resource_directory))
-        .map_err(|error| SmokeFailure::new("pdfium", error.to_string()))?;
-    native_assets.pdfium_library = Some(pdfium_path.to_string_lossy().into_owned());
-    let pdfium = shared_pdfium(&pdfium_path)
-        .map_err(|error| SmokeFailure::new("pdfium", error.to_string()))?;
+    let pdfium = if plan.processing_options.pdf {
+        let pdfium_path = resolve_pdfium_library(Some(&resource_directory))
+            .map_err(|error| SmokeFailure::new("pdfium", error.to_string()))?;
+        native_assets.pdfium_library = Some(pdfium_path.to_string_lossy().into_owned());
+        Some(
+            shared_pdfium(&pdfium_path)
+                .map_err(|error| SmokeFailure::new("pdfium", error.to_string()))?,
+        )
+    } else {
+        None
+    };
     let media_tools = TauriMediaToolRunner::new(app.clone());
 
     Ok(run_pipeline(plan, pdfium, &media_tools, events))
@@ -293,7 +301,12 @@ mod tests {
             "inputPath": "/fixtures/input",
             "outputPath": "/fixtures/output",
             "ticketFilter": "P1-P3",
-            "resultPath": "/tmp/x-traversal-smoke.json"
+            "processingOptions": {
+                "pdf": false,
+                "images": true,
+                "video": false
+            },
+            "resultPath": "/tmp/horizon-traversal-smoke.json"
         }))
         .unwrap();
 
@@ -301,8 +314,16 @@ mod tests {
         assert_eq!(request.selection.output_path, "/fixtures/output");
         assert_eq!(request.selection.ticket_filter, "P1-P3");
         assert_eq!(
+            request.selection.processing_options,
+            ProcessingOptions {
+                pdf: false,
+                images: true,
+                video: false,
+            }
+        );
+        assert_eq!(
             request.result_path,
-            PathBuf::from("/tmp/x-traversal-smoke.json")
+            PathBuf::from("/tmp/horizon-traversal-smoke.json")
         );
     }
 
@@ -317,6 +338,7 @@ mod tests {
                 input_path: "/input".to_owned(),
                 output_path: "/output".to_owned(),
                 ticket_filter: String::new(),
+                processing_options: ProcessingOptions::default(),
             },
             native_assets: ResolvedNativeAssets::default(),
             events: Vec::new(),
@@ -331,6 +353,7 @@ mod tests {
         assert_eq!(document["schemaVersion"], 1);
         assert_eq!(document["outcome"], "failed");
         assert_eq!(document["selection"]["inputPath"], "/input");
+        assert_eq!(document["selection"]["processingOptions"]["pdf"], true);
         assert_eq!(document["error"]["stage"], "validation");
         assert!(!temporary
             .path()

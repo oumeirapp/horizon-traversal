@@ -1,5 +1,5 @@
 [package]
-name = "x-traversal"
+name = "horizon-traversal"
 version = "0.1.0"
 description = "Collect and optimize approved ticket assets"
 authors = ["Horizon"]
@@ -11,13 +11,13 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "x_traversal_lib"
+name = "horizon_traversal_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = []
 # Enables the opt-in packaged application smoke harness. The harness remains
-# dormant unless X_TRAVERSAL_PACKAGED_SMOKE_REQUEST contains a JSON request.
+# dormant unless HORIZON_TRAVERSAL_PACKAGED_SMOKE_REQUEST contains a JSON request.
 packaged-smoke = []
 
 [build-dependencies]

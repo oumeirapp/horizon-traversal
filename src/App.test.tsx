@@ -69,7 +69,7 @@ async function configureValidRun() {
   });
 }
 
-describe("X Traversal workbench", () => {
+describe("Horizon Traversal workbench", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     nativeMocks.validateSelection.mockReset();
@@ -82,10 +82,17 @@ describe("X Traversal workbench", () => {
   it("starts with an accessible, incomplete transfer route", () => {
     render(<App />);
 
-    expect(screen.getByRole("heading", { name: "X Traversal" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Horizon Traversal" }),
+    ).toBeVisible();
     expect(screen.getByRole("button", { name: "Start processing" })).toBeDisabled();
     expect(screen.getByText("Choose both folders")).toBeVisible();
-    expect(screen.getByRole("list", { name: "Processing stages" })).toBeVisible();
+    const route = screen.getByRole("list", { name: "Processing stages" });
+    expect(route).toBeVisible();
+    expect(within(route).getAllByRole("listitem")).toHaveLength(6);
+    expect(screen.getByRole("checkbox", { name: "Optimize PDFs" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Optimize images" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Optimize video" })).toBeChecked();
     expect(screen.getByRole("tab", { name: /Activity/ })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -101,6 +108,11 @@ describe("X Traversal workbench", () => {
       inputPath: "/tickets",
       outputPath: "/exports",
       ticketFilter: "",
+      processingOptions: {
+        pdf: true,
+        images: true,
+        video: true,
+      },
     });
     expect(screen.getByText("2 tickets matched")).toBeVisible();
     expect(screen.getByRole("button", { name: "Start processing" })).toBeEnabled();
@@ -158,6 +170,55 @@ describe("X Traversal workbench", () => {
     expect(screen.getByText("1 ticket matched")).toBeVisible();
     expect(screen.queryByText("No tickets matched the old request.")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start processing" })).toBeEnabled();
+  });
+
+  it("sends the selected optimization options and locks them during the run", async () => {
+    nativeMocks.startPipeline.mockImplementation(
+      () => new Promise<PipelineSummary>(() => undefined),
+    );
+    render(<App />);
+
+    const pdfOption = screen.getByRole("checkbox", { name: "Optimize PDFs" });
+    const imageOption = screen.getByRole("checkbox", { name: "Optimize images" });
+    const videoOption = screen.getByRole("checkbox", { name: "Optimize video" });
+    fireEvent.click(pdfOption);
+    fireEvent.click(videoOption);
+
+    expect(pdfOption).not.toBeChecked();
+    expect(imageOption).toBeChecked();
+    expect(videoOption).not.toBeChecked();
+    const route = screen.getByRole("list", { name: "Processing stages" });
+    expect(within(route).queryByText("PDF")).not.toBeInTheDocument();
+    expect(within(route).getByText("Images")).toBeVisible();
+    expect(within(route).queryByText("Video")).not.toBeInTheDocument();
+    expect(within(route).getAllByRole("listitem")).toHaveLength(4);
+    expect(
+      screen.getByText("4 selected stages, one ticket at a time."),
+    ).toBeVisible();
+
+    await configureValidRun();
+
+    const expectedRequest = {
+      inputPath: "/tickets",
+      outputPath: "/exports",
+      ticketFilter: "",
+      processingOptions: {
+        pdf: false,
+        images: true,
+        video: false,
+      },
+    };
+    expect(nativeMocks.validateSelection).toHaveBeenLastCalledWith(expectedRequest);
+
+    fireEvent.click(screen.getByRole("button", { name: "Start processing" }));
+
+    expect(nativeMocks.startPipeline).toHaveBeenCalledWith(
+      expectedRequest,
+      expect.any(Function),
+    );
+    expect(pdfOption).toBeDisabled();
+    expect(imageOption).toBeDisabled();
+    expect(videoOption).toBeDisabled();
   });
 
   it("uses native directory selection while keeping paths editable", async () => {
@@ -240,12 +301,10 @@ describe("X Traversal workbench", () => {
     const result = screen.getByRole("region", {
       name: "Transfer completed with issues",
     });
-    expect(within(result).getByText("Successful tickets").nextElementSibling).toHaveTextContent("0");
-    expect(within(result).getByText("Partial tickets").nextElementSibling).toHaveTextContent("1");
-    expect(within(result).getByText("Failed tickets").nextElementSibling).toHaveTextContent("0");
-    expect(within(result).getByText("Failed files").nextElementSibling).toHaveTextContent("1");
-    expect(within(result).getByText("Warnings").nextElementSibling).toHaveTextContent("1");
-    expect(within(result).getByText("Errors").nextElementSibling).toHaveTextContent("1");
+    expect(result).toHaveTextContent(
+      "1 ticket processed · 1 error · 1 failed file · 1 warning · 00:02",
+    );
+    expect(within(result).queryByText("Successful tickets")).not.toBeInTheDocument();
 
     fireEvent.click(warningTab);
     expect(screen.getByText("Skipped a large preview")).toBeVisible();
@@ -307,13 +366,12 @@ describe("X Traversal workbench", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Complete");
     expect(
       screen.getByText(
-        "Transfer completed successfully. Warnings remain available for review.",
+        "Files are ready. Warnings remain available in the activity log.",
       ),
     ).toBeVisible();
-    expect(within(result).getByText("Successful tickets").nextElementSibling).toHaveTextContent("1");
-    expect(within(result).getByText("Partial tickets").nextElementSibling).toHaveTextContent("0");
-    expect(within(result).getByText("Warnings").nextElementSibling).toHaveTextContent("1");
-    expect(within(result).getByText("Errors").nextElementSibling).toHaveTextContent("0");
+    expect(result).toHaveTextContent(
+      "1 ticket processed · 0 errors · 1 warning · 00:02",
+    );
     expect(screen.getByText("Resize images: 1 warning").closest("li")).toHaveClass(
       "asset-route__stop--warning",
     );
@@ -452,7 +510,12 @@ describe("X Traversal workbench", () => {
     });
     expect(screen.getByRole("heading", { name: "Transfer complete" })).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "New run" }));
+    const resetButton = screen.getByRole("button", { name: "Start another run" });
+    const resetIcon = resetButton.querySelector(".lucide-rotate-ccw");
+    expect(resetIcon).toBeInTheDocument();
+    expect(resetIcon).toHaveAttribute("width", "20");
+    expect(resetIcon).toHaveAttribute("stroke", "currentColor");
+    fireEvent.click(resetButton);
     await act(async () => {
       await Promise.resolve();
     });

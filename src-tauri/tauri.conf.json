@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "X Traversal",
+  "productName": "Horizon Traversal",
   "version": "0.1.0",
-  "identifier": "com.horizon.xtraversal",
+  "identifier": "com.horizon.traversal",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "X Traversal",
+        "title": "Horizon Traversal",
         "width": 1080,
         "height": 820,
         "minWidth": 820,

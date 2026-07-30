@@ -503,7 +503,7 @@ fn unique_video_temporary_path(path: &Path) -> io::Result<PathBuf> {
     for counter in 0_u32..1_000 {
         let mut name = OsString::from(".");
         name.push(stem);
-        name.push(format!(".x-traversal-{counter}.tmp"));
+        name.push(format!(".horizon-traversal-{counter}.tmp"));
         if let Some(extension) = path.extension() {
             name.push(".");
             name.push(extension);

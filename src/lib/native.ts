@@ -4,6 +4,13 @@ export interface SelectionRequest {
   inputPath: string;
   outputPath: string;
   ticketFilter: string;
+  processingOptions: ProcessingOptions;
+}
+
+export interface ProcessingOptions {
+  pdf: boolean;
+  images: boolean;
+  video: boolean;
 }
 
 export interface ValidationIssue {

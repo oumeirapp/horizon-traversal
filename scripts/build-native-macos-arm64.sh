@@ -24,7 +24,7 @@ SOURCE_DATE_EPOCH="1781678760"
 
 SCRIPT_DIRECTORY=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPOSITORY_ROOT=$(CDPATH= cd -- "${SCRIPT_DIRECTORY}/.." && pwd)
-OUTPUT_DIRECTORY=${X_TRAVERSAL_NATIVE_OUTPUT_DIR:-"${REPOSITORY_ROOT}/src-tauri/binaries"}
+OUTPUT_DIRECTORY=${HORIZON_TRAVERSAL_NATIVE_OUTPUT_DIR:-"${REPOSITORY_ROOT}/src-tauri/binaries"}
 
 fail() {
   printf 'error: %s\n' "$*" >&2
@@ -96,7 +96,7 @@ cleanup() {
   fi
 
   case "$WORK_DIRECTORY" in
-    "${TMPDIR:-/tmp}"/x-traversal-native.*)
+    "${TMPDIR:-/tmp}"/horizon-traversal-native.*)
       rm -rf -- "$WORK_DIRECTORY"
       ;;
     *)
@@ -119,9 +119,9 @@ case "$JOBS" in
     ;;
 esac
 
-WORK_DIRECTORY=$(mktemp -d "${TMPDIR:-/tmp}/x-traversal-native.XXXXXX")
+WORK_DIRECTORY=$(mktemp -d "${TMPDIR:-/tmp}/horizon-traversal-native.XXXXXX")
 export WORK_DIRECTORY
-export KEEP_BUILD_DIRECTORY=${X_TRAVERSAL_KEEP_NATIVE_BUILD:-0}
+export KEEP_BUILD_DIRECTORY=${HORIZON_TRAVERSAL_KEEP_NATIVE_BUILD:-0}
 trap cleanup EXIT HUP INT TERM
 
 DOWNLOAD_DIRECTORY="${WORK_DIRECTORY}/downloads"
@@ -229,7 +229,7 @@ for argument in "$@"; do
 done
 
 if [ "$mode" = "version" ]; then
-  printf 'x-traversal-pkg-config-shim 1\n'
+  printf 'horizon-traversal-pkg-config-shim 1\n'
   exit 0
 fi
 

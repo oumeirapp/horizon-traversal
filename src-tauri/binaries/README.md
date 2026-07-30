@@ -22,7 +22,7 @@ From the repository root, run:
 The script accepts two optional environment variables:
 
 - `JOBS`: positive build parallelism (defaults to the logical CPU count).
-- `X_TRAVERSAL_KEEP_NATIVE_BUILD=1`: retain the temporary source and build
+- `HORIZON_TRAVERSAL_KEEP_NATIVE_BUILD=1`: retain the temporary source and build
   tree for inspection.
 
 The build requires macOS on Apple Silicon, Xcode Command Line Tools, and an

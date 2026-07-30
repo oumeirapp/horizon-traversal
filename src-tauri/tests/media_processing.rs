@@ -1,14 +1,14 @@
 use std::fs;
 use std::path::Path;
 
-use image::{GenericImageView, ImageFormat, Rgb, RgbImage, Rgba, RgbaImage};
-use tempfile::tempdir;
-use x_traversal_lib::pipeline::images::resize_images;
-use x_traversal_lib::pipeline::native::{resolve_pdfium_library, PDFIUM_VERSION};
-use x_traversal_lib::pipeline::pdf::{
+use horizon_traversal_lib::pipeline::images::resize_images;
+use horizon_traversal_lib::pipeline::native::{resolve_pdfium_library, PDFIUM_VERSION};
+use horizon_traversal_lib::pipeline::pdf::{
     convert_pdfs, shared_pdfium, PDF_RENDER_MAX_HEIGHT, PDF_RENDER_MAX_WIDTH,
 };
-use x_traversal_lib::pipeline::types::NoticeLevel;
+use horizon_traversal_lib::pipeline::types::NoticeLevel;
+use image::{GenericImageView, ImageFormat, Rgb, RgbImage, Rgba, RgbaImage};
+use tempfile::tempdir;
 
 fn save_rgb(path: &Path, width: u32, height: u32) {
     RgbImage::from_pixel(width, height, Rgb([24, 88, 120]))
@@ -17,7 +17,7 @@ fn save_rgb(path: &Path, width: u32, height: u32) {
 }
 
 fn save_empty_pdf(path: &Path, width: u32, height: u32) {
-    let mut pdf = b"%PDF-1.4\n%XTraversal\n".to_vec();
+    let mut pdf = b"%PDF-1.4\n%HorizonTraversal\n".to_vec();
     let objects = [
         "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_owned(),
         "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".to_owned(),

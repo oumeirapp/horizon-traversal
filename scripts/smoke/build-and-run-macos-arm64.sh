@@ -18,7 +18,7 @@ require_file() {
 SCRIPT_DIRECTORY=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPOSITORY=$(CDPATH= cd -- "$SCRIPT_DIRECTORY/../.." && pwd)
 TARGET="aarch64-apple-darwin"
-APP_BUNDLE="$REPOSITORY/src-tauri/target/$TARGET/release/bundle/macos/X Traversal.app"
+APP_BUNDLE="$REPOSITORY/src-tauri/target/$TARGET/release/bundle/macos/Horizon Traversal.app"
 FFMPEG="$REPOSITORY/src-tauri/binaries/ffmpeg-$TARGET"
 FFPROBE="$REPOSITORY/src-tauri/binaries/ffprobe-$TARGET"
 PDF_FIXTURE="$REPOSITORY/src-tauri/tests/fixtures/one-page.pdf"
@@ -35,16 +35,16 @@ for file in "$FFMPEG" "$FFPROBE" "$PDF_FIXTURE" "$IMAGE_FIXTURE" "$RUNNER" "$INS
   require_file "$file"
 done
 
-SMOKE_DIRECTORY=$(mktemp -d "${TMPDIR:-/tmp}/x-traversal-package-smoke.XXXXXX")
+SMOKE_DIRECTORY=$(mktemp -d "${TMPDIR:-/tmp}/horizon-traversal-package-smoke.XXXXXX")
 SMOKE_DIRECTORY=$(CDPATH= cd -- "$SMOKE_DIRECTORY" && pwd -P)
 SMOKE_SUCCEEDED=0
 cleanup() {
-  if [ "$SMOKE_SUCCEEDED" != "1" ] || [ "${X_TRAVERSAL_KEEP_SMOKE_WORKSPACE:-0}" = "1" ]; then
+  if [ "$SMOKE_SUCCEEDED" != "1" ] || [ "${HORIZON_TRAVERSAL_KEEP_SMOKE_WORKSPACE:-0}" = "1" ]; then
     printf 'Kept packaged smoke workspace: %s\n' "$SMOKE_DIRECTORY"
     return
   fi
   case "${SMOKE_DIRECTORY##*/}" in
-    x-traversal-package-smoke.*)
+    horizon-traversal-package-smoke.*)
       rm -rf -- "$SMOKE_DIRECTORY"
       ;;
     *)
@@ -92,7 +92,7 @@ npm run tauri -- build \
 
 [ -d "$APP_BUNDLE" ] || fail "Tauri did not produce the expected app bundle: $APP_BUNDLE"
 # Verify byte-for-byte native provenance before signing mutates Mach-O files.
-X_TRAVERSAL_SKIP_CODESIGN_VERIFY=1 "$INSPECTOR" "$APP_BUNDLE"
+HORIZON_TRAVERSAL_SKIP_CODESIGN_VERIFY=1 "$INSPECTOR" "$APP_BUNDLE"
 # The package job has no distribution identity. Apply an explicit ad-hoc deep
 # signature so the smoke test still exercises macOS nested-code validation.
 codesign --force --deep --sign - --timestamp=none "$APP_BUNDLE"
@@ -147,16 +147,16 @@ done
 [ "$(wc -l < "$REPORT" | tr -d ' ')" = "3" ] ||
   fail "ticket report contains paths outside the current ticket"
 
-if [ -n "${X_TRAVERSAL_SMOKE_REPORT_PATH:-}" ]; then
-  case "$X_TRAVERSAL_SMOKE_REPORT_PATH" in
+if [ -n "${HORIZON_TRAVERSAL_SMOKE_REPORT_PATH:-}" ]; then
+  case "$HORIZON_TRAVERSAL_SMOKE_REPORT_PATH" in
     /*)
       ;;
     *)
-      fail "X_TRAVERSAL_SMOKE_REPORT_PATH must be absolute"
+      fail "HORIZON_TRAVERSAL_SMOKE_REPORT_PATH must be absolute"
       ;;
   esac
-  mkdir -p "${X_TRAVERSAL_SMOKE_REPORT_PATH%/*}"
-  cp "$RESULT_PATH" "$X_TRAVERSAL_SMOKE_REPORT_PATH"
+  mkdir -p "${HORIZON_TRAVERSAL_SMOKE_REPORT_PATH%/*}"
+  cp "$RESULT_PATH" "$HORIZON_TRAVERSAL_SMOKE_REPORT_PATH"
 fi
 
 printf 'Packaged workflow assertions passed: %s\n' "$APP_BUNDLE"

@@ -93,8 +93,10 @@ mod tests {
 
     #[test]
     fn packaged_candidates_use_the_macos_frameworks_directory() {
-        let resource_directory = Path::new("/Applications/X Traversal.app/Contents/Resources");
-        let executable = Path::new("/Applications/X Traversal.app/Contents/MacOS/X Traversal");
+        let resource_directory =
+            Path::new("/Applications/Horizon Traversal.app/Contents/Resources");
+        let executable =
+            Path::new("/Applications/Horizon Traversal.app/Contents/MacOS/horizon-traversal");
 
         let candidates = packaged_pdfium_candidates(
             Some(resource_directory),
@@ -106,7 +108,7 @@ mod tests {
         assert_eq!(
             candidates,
             vec![PathBuf::from(
-                "/Applications/X Traversal.app/Contents/Frameworks/libpdfium.dylib"
+                "/Applications/Horizon Traversal.app/Contents/Frameworks/libpdfium.dylib"
             )]
         );
 
@@ -115,10 +117,10 @@ mod tests {
             candidates,
             vec![
                 PathBuf::from(
-                    "/Applications/X Traversal.app/Contents/Resources/native/libpdfium.dylib"
+                    "/Applications/Horizon Traversal.app/Contents/Resources/native/libpdfium.dylib"
                 ),
                 PathBuf::from(
-                    "/Applications/X Traversal.app/Contents/MacOS/native/libpdfium.dylib"
+                    "/Applications/Horizon Traversal.app/Contents/MacOS/native/libpdfium.dylib"
                 ),
             ]
         );
@@ -128,7 +130,7 @@ mod tests {
     fn packaged_candidates_never_include_the_source_tree() {
         let candidates = packaged_pdfium_candidates(
             None,
-            Path::new("/Applications/X Traversal.app/Contents/MacOS/X Traversal"),
+            Path::new("/Applications/Horizon Traversal.app/Contents/MacOS/horizon-traversal"),
             OsStr::new("libpdfium.dylib"),
         );
         let manifest_directory = Path::new(env!("CARGO_MANIFEST_DIR"));

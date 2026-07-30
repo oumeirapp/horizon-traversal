@@ -62,11 +62,17 @@ pub async fn start_pipeline(
         plan.input = roots.input;
         plan.output = roots.output;
 
-        let resource_directory = app.path().resource_dir().ok();
-        let pdfium_path = resolve_pdfium_library(resource_directory.as_deref())
-            .map_err(|error| AppError::new("pdfiumUnavailable", error.to_string()))?;
-        let pdfium = shared_pdfium(&pdfium_path)
-            .map_err(|error| AppError::new("pdfiumUnavailable", error))?;
+        let pdfium = if plan.processing_options.pdf {
+            let resource_directory = app.path().resource_dir().ok();
+            let pdfium_path = resolve_pdfium_library(resource_directory.as_deref())
+                .map_err(|error| AppError::new("pdfiumUnavailable", error.to_string()))?;
+            Some(
+                shared_pdfium(&pdfium_path)
+                    .map_err(|error| AppError::new("pdfiumUnavailable", error))?,
+            )
+        } else {
+            None
+        };
         let media_tools = TauriMediaToolRunner::new(app);
         let events = ChannelEventSink(on_event);
         let summary = run_pipeline(plan.clone(), pdfium, &media_tools, &events);
@@ -214,6 +220,7 @@ pub(crate) fn validate_request(
         input: roots.input,
         output: roots.output,
         tickets: selection.tickets,
+        processing_options: request.processing_options,
     };
     (summary, Some(plan))
 }
@@ -272,6 +279,7 @@ fn app_error_from_selection(error: SelectionError) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::ipc::ProcessingOptions;
     use tempfile::tempdir;
 
     fn request(input: &Path, output: &Path, ticket_filter: &str) -> SelectionRequest {
@@ -279,6 +287,7 @@ mod tests {
             input_path: input.to_string_lossy().into_owned(),
             output_path: output.to_string_lossy().into_owned(),
             ticket_filter: ticket_filter.to_owned(),
+            processing_options: ProcessingOptions::default(),
         }
     }
 
@@ -307,7 +316,13 @@ mod tests {
         fs::create_dir_all(input.join("P10 Campaign")).unwrap();
         fs::create_dir_all(input.join("P2 Campaign")).unwrap();
 
-        let (summary, plan) = validate_request(&request(&input, &output, "P2,P10"));
+        let mut request = request(&input, &output, "P2,P10");
+        request.processing_options = ProcessingOptions {
+            pdf: false,
+            images: true,
+            video: false,
+        };
+        let (summary, plan) = validate_request(&request);
 
         assert!(summary.valid);
         assert_eq!(
@@ -318,6 +333,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["P10 Campaign", "P2 Campaign"]
         );
-        assert_eq!(plan.unwrap().tickets.len(), 2);
+        let plan = plan.unwrap();
+        assert_eq!(plan.tickets.len(), 2);
+        assert_eq!(plan.processing_options, request.processing_options);
     }
 }

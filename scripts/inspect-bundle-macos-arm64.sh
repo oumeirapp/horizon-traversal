@@ -94,7 +94,7 @@ print_and_verify_hash() {
   fi
 }
 
-[ "$#" -eq 1 ] || fail "usage: $0 /path/to/X\\ Traversal.app"
+[ "$#" -eq 1 ] || fail "usage: $0 /path/to/Horizon\\ Traversal.app"
 [ "$(uname -s)" = "Darwin" ] || fail "bundle inspection requires macOS"
 
 for command in awk codesign grep lipo otool plutil shasum uname; do
@@ -141,12 +141,12 @@ FFMPEG_SHA256=$(plutil -extract 'targets.aarch64-apple-darwin.ffmpeg.sha256' raw
 FFPROBE_SHA256=$(plutil -extract 'targets.aarch64-apple-darwin.ffprobe.sha256' raw -o - "$NATIVE_MANIFEST")
 PDFIUM_SHA256=$(plutil -extract 'targets.aarch64-apple-darwin.pdfium.sha256' raw -o - "$NATIVE_MANIFEST")
 
-if [ "${X_TRAVERSAL_SKIP_CODESIGN_VERIFY:-0}" = "1" ]; then
+if [ "${HORIZON_TRAVERSAL_SKIP_CODESIGN_VERIFY:-0}" = "1" ]; then
   printf '%s\n' 'Code-signature verification skipped explicitly for this local unsigned smoke bundle.'
   CODE_SIGNATURE_VERIFIED=0
 else
   codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE" ||
-    fail "bundle code signature is invalid; set X_TRAVERSAL_SKIP_CODESIGN_VERIFY=1 only for a local unsigned smoke build"
+    fail "bundle code signature is invalid; set HORIZON_TRAVERSAL_SKIP_CODESIGN_VERIFY=1 only for a local unsigned smoke build"
   CODE_SIGNATURE_VERIFIED=1
 fi
 
@@ -179,7 +179,7 @@ printf '%s\n' "$FFPROBE_OUTPUT" | grep -F "ffprobe version $FFMPEG_VERSION" >/de
 
 printf 'ffmpeg version: %s\n' "$(printf '%s\n' "$FFMPEG_OUTPUT" | awk 'NR == 1 { print $3 }')"
 printf 'ffprobe version: %s\n' "$(printf '%s\n' "$FFPROBE_OUTPUT" | awk 'NR == 1 { print $3 }')"
-print_and_verify_hash "$APP_EXECUTABLE" "application" "${X_TRAVERSAL_APP_SHA256:-}"
+print_and_verify_hash "$APP_EXECUTABLE" "application" "${HORIZON_TRAVERSAL_APP_SHA256:-}"
 if [ "$CODE_SIGNATURE_VERIFIED" = "1" ]; then
   # Mach-O code signatures change the byte-level digest. The deep signature
   # check above authenticates signed nested code; the source manifest digests
@@ -187,13 +187,13 @@ if [ "$CODE_SIGNATURE_VERIFIED" = "1" ]; then
   printf 'ffmpeg source SHA-256: %s\n' "$FFMPEG_SHA256"
   printf 'ffprobe source SHA-256: %s\n' "$FFPROBE_SHA256"
   printf 'PDFium source SHA-256: %s\n' "$PDFIUM_SHA256"
-  FFMPEG_EXPECTED=${X_TRAVERSAL_FFMPEG_SHA256:-}
-  FFPROBE_EXPECTED=${X_TRAVERSAL_FFPROBE_SHA256:-}
-  PDFIUM_EXPECTED=${X_TRAVERSAL_PDFIUM_SHA256:-}
+  FFMPEG_EXPECTED=${HORIZON_TRAVERSAL_FFMPEG_SHA256:-}
+  FFPROBE_EXPECTED=${HORIZON_TRAVERSAL_FFPROBE_SHA256:-}
+  PDFIUM_EXPECTED=${HORIZON_TRAVERSAL_PDFIUM_SHA256:-}
 else
-  FFMPEG_EXPECTED=${X_TRAVERSAL_FFMPEG_SHA256:-$FFMPEG_SHA256}
-  FFPROBE_EXPECTED=${X_TRAVERSAL_FFPROBE_SHA256:-$FFPROBE_SHA256}
-  PDFIUM_EXPECTED=${X_TRAVERSAL_PDFIUM_SHA256:-$PDFIUM_SHA256}
+  FFMPEG_EXPECTED=${HORIZON_TRAVERSAL_FFMPEG_SHA256:-$FFMPEG_SHA256}
+  FFPROBE_EXPECTED=${HORIZON_TRAVERSAL_FFPROBE_SHA256:-$FFPROBE_SHA256}
+  PDFIUM_EXPECTED=${HORIZON_TRAVERSAL_PDFIUM_SHA256:-$PDFIUM_SHA256}
 fi
 print_and_verify_hash "$FFMPEG" "ffmpeg" "$FFMPEG_EXPECTED"
 print_and_verify_hash "$FFPROBE" "ffprobe" "$FFPROBE_EXPECTED"

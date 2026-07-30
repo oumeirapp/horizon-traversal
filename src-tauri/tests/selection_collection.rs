@@ -2,13 +2,13 @@ use std::fs;
 use std::path::Path;
 
 use filetime::{set_file_mtime, FileTime};
-use tempfile::tempdir;
-use x_traversal_lib::pipeline::collection::{
+use horizon_traversal_lib::pipeline::collection::{
     collect_from_source, copy_with_collision_suffix, replace_ticket_output,
 };
-use x_traversal_lib::pipeline::discovery::find_source_folders;
-use x_traversal_lib::pipeline::selection::{select_tickets, validate_roots, SelectionError};
-use x_traversal_lib::pipeline::types::NoticeLevel;
+use horizon_traversal_lib::pipeline::discovery::find_source_folders;
+use horizon_traversal_lib::pipeline::selection::{select_tickets, validate_roots, SelectionError};
+use horizon_traversal_lib::pipeline::types::NoticeLevel;
+use tempfile::tempdir;
 
 fn write(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {

@@ -15,7 +15,7 @@ require_file() {
 }
 
 [ "$#" -eq 2 ] ||
-  fail "usage: $0 /path/to/X\\ Traversal.app /absolute/path/to/request.json"
+  fail "usage: $0 /path/to/Horizon\\ Traversal.app /absolute/path/to/request.json"
 [ "$(uname -s)" = "Darwin" ] || fail "packaged smoke tests require macOS"
 [ "$(uname -m)" = "arm64" ] || fail "packaged smoke tests must run natively on Apple Silicon"
 command -v plutil >/dev/null 2>&1 || fail "plutil is unavailable"
@@ -49,14 +49,14 @@ esac
   fail "request resultPath already exists; use a fresh path: $RESULT_PATH"
 
 REQUEST_JSON=$(cat "$REQUEST_FILE")
-TIMEOUT_SECONDS=${X_TRAVERSAL_SMOKE_TIMEOUT_SECONDS:-180}
+TIMEOUT_SECONDS=${HORIZON_TRAVERSAL_SMOKE_TIMEOUT_SECONDS:-180}
 case "$TIMEOUT_SECONDS" in
   '' | *[!0-9]* | 0)
-    fail "X_TRAVERSAL_SMOKE_TIMEOUT_SECONDS must be a positive integer"
+    fail "HORIZON_TRAVERSAL_SMOKE_TIMEOUT_SECONDS must be a positive integer"
     ;;
 esac
 
-X_TRAVERSAL_PACKAGED_SMOKE_REQUEST="$REQUEST_JSON" "$APP_EXECUTABLE" &
+HORIZON_TRAVERSAL_PACKAGED_SMOKE_REQUEST="$REQUEST_JSON" "$APP_EXECUTABLE" &
 APP_PID=$!
 elapsed=0
 while kill -0 "$APP_PID" 2>/dev/null; do

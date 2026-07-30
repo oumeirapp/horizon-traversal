@@ -8,7 +8,8 @@ use super::collection::{collect_from_source, replace_ticket_output};
 use super::discovery::find_source_folders;
 use super::images::resize_images;
 use super::ipc::{
-    LogLevel, PipelineEvent, PipelineStage, PipelineSummary, RunStatus, TicketStatus,
+    LogLevel, PipelineEvent, PipelineStage, PipelineSummary, ProcessingOptions, RunStatus,
+    TicketStatus,
 };
 use super::pdf::convert_pdfs;
 use super::types::{CollectionOutcome, NoticeLevel, PipelineNotice, ProcessingOutcome};
@@ -19,6 +20,7 @@ pub struct PipelinePlan {
     pub input: PathBuf,
     pub output: PathBuf,
     pub tickets: Vec<PathBuf>,
+    pub processing_options: ProcessingOptions,
 }
 
 pub trait PipelineEventSink: Send + Sync {
@@ -36,7 +38,7 @@ where
 
 pub fn run_pipeline(
     plan: PipelinePlan,
-    pdfium: &Pdfium,
+    pdfium: Option<&Pdfium>,
     media_tools: &impl MediaToolRunner,
     events: &impl PipelineEventSink,
 ) -> PipelineSummary {
@@ -80,7 +82,14 @@ pub fn run_pipeline(
             index: offset + 1,
             total_tickets,
         });
-        let result = process_ticket(ticket, &plan.output, pdfium, media_tools, events);
+        let result = process_ticket(
+            ticket,
+            &plan.output,
+            plan.processing_options,
+            pdfium,
+            media_tools,
+            events,
+        );
         match result.status {
             RunStatus::Success => summary.successful_tickets += 1,
             RunStatus::PartialSuccess => summary.partial_tickets += 1,
@@ -135,7 +144,8 @@ impl Default for TicketResult {
 fn process_ticket(
     ticket: &Path,
     output_root: &Path,
-    pdfium: &Pdfium,
+    processing_options: ProcessingOptions,
+    pdfium: Option<&Pdfium>,
     media_tools: &impl MediaToolRunner,
     events: &impl PipelineEventSink,
 ) -> TicketResult {
@@ -248,54 +258,96 @@ fn process_ticket(
     }
 
     stage(events, &ticket_name, PipelineStage::Pdf);
-    let pdf_outcome = {
-        let mut on_notice = |notice| absorb_notice(events, &ticket_name, &mut result, notice);
-        convert_pdfs(&ticket_output, pdfium, &mut on_notice)
-    };
-    match pdf_outcome {
-        Ok(outcome) => absorb_processing(&mut result, outcome),
-        Err(error) => ticket_log(
+    if !processing_options.pdf {
+        ticket_log(
+            events,
+            &ticket_name,
+            &mut result,
+            LogLevel::Info,
+            "PDF optimization disabled for this run; skipped".to_owned(),
+            Some(&ticket_output),
+        );
+    } else if let Some(pdfium) = pdfium {
+        let pdf_outcome = {
+            let mut on_notice = |notice| absorb_notice(events, &ticket_name, &mut result, notice);
+            convert_pdfs(&ticket_output, pdfium, &mut on_notice)
+        };
+        match pdf_outcome {
+            Ok(outcome) => absorb_processing(&mut result, outcome),
+            Err(error) => ticket_log(
+                events,
+                &ticket_name,
+                &mut result,
+                LogLevel::Error,
+                format!("PDF stage failed: {error}"),
+                Some(&ticket_output),
+            ),
+        }
+    } else {
+        ticket_log(
             events,
             &ticket_name,
             &mut result,
             LogLevel::Error,
-            format!("PDF stage failed: {error}"),
+            "PDF optimization is enabled, but PDFium is unavailable".to_owned(),
             Some(&ticket_output),
-        ),
+        );
     }
 
     stage(events, &ticket_name, PipelineStage::Images);
-    let image_outcome = {
-        let mut on_notice = |notice| absorb_notice(events, &ticket_name, &mut result, notice);
-        resize_images(&ticket_output, &mut on_notice)
-    };
-    match image_outcome {
-        Ok(outcome) => absorb_processing(&mut result, outcome),
-        Err(error) => ticket_log(
+    if processing_options.images {
+        let image_outcome = {
+            let mut on_notice = |notice| absorb_notice(events, &ticket_name, &mut result, notice);
+            resize_images(&ticket_output, &mut on_notice)
+        };
+        match image_outcome {
+            Ok(outcome) => absorb_processing(&mut result, outcome),
+            Err(error) => ticket_log(
+                events,
+                &ticket_name,
+                &mut result,
+                LogLevel::Error,
+                format!("Image stage failed: {error}"),
+                Some(&ticket_output),
+            ),
+        }
+    } else {
+        ticket_log(
             events,
             &ticket_name,
             &mut result,
-            LogLevel::Error,
-            format!("Image stage failed: {error}"),
+            LogLevel::Info,
+            "Image optimization disabled for this run; skipped".to_owned(),
             Some(&ticket_output),
-        ),
+        );
     }
 
     stage(events, &ticket_name, PipelineStage::Video);
-    let video_outcome = {
-        let mut on_notice = |notice| absorb_notice(events, &ticket_name, &mut result, notice);
-        resize_videos(&ticket_output, media_tools, &mut on_notice)
-    };
-    match video_outcome {
-        Ok(outcome) => absorb_processing(&mut result, outcome),
-        Err(error) => ticket_log(
+    if processing_options.video {
+        let video_outcome = {
+            let mut on_notice = |notice| absorb_notice(events, &ticket_name, &mut result, notice);
+            resize_videos(&ticket_output, media_tools, &mut on_notice)
+        };
+        match video_outcome {
+            Ok(outcome) => absorb_processing(&mut result, outcome),
+            Err(error) => ticket_log(
+                events,
+                &ticket_name,
+                &mut result,
+                LogLevel::Error,
+                format!("Video stage failed: {error}"),
+                Some(&ticket_output),
+            ),
+        }
+    } else {
+        ticket_log(
             events,
             &ticket_name,
             &mut result,
-            LogLevel::Error,
-            format!("Video stage failed: {error}"),
+            LogLevel::Info,
+            "Video optimization disabled for this run; skipped".to_owned(),
             Some(&ticket_output),
-        ),
+        );
     }
 
     stage(events, &ticket_name, PipelineStage::Report);

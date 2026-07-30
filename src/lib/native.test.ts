@@ -6,6 +6,7 @@ import {
   type PipelineEvent,
   type PipelineStage,
   type PipelineSummary,
+  type ProcessingOptions,
   type SelectionRequest,
   type SelectionSummary,
   type TicketStatus,
@@ -35,6 +36,11 @@ const request: SelectionRequest = {
   inputPath: "/tickets",
   outputPath: "/exports",
   ticketFilter: "P1-P3",
+  processingOptions: {
+    pdf: true,
+    images: false,
+    video: true,
+  },
 };
 
 const selection: SelectionSummary = {
@@ -117,6 +123,9 @@ describe("native Tauri boundary", () => {
     >();
     expectTypeOf<TicketStatus>().toEqualTypeOf<
       "success" | "partialSuccess" | "failed"
+    >();
+    expectTypeOf<SelectionRequest["processingOptions"]>().toEqualTypeOf<
+      ProcessingOptions
     >();
   });
 });
