@@ -10,6 +10,11 @@ const windowsBuilder = await readFile(
   new URL("./build-native-windows-x64.ps1", import.meta.url),
   "utf8",
 );
+const nativeManifest = JSON.parse(
+  await readFile(new URL("../src-tauri/native-assets.json", import.meta.url), "utf8"),
+);
+const windowsConfiguration =
+  nativeManifest.targets["x86_64-pc-windows-msvc"].ffmpeg.requiredConfiguration;
 
 test("macOS builder validates one semantic build and only reports output hashes", () => {
   assert.doesNotMatch(macosBuilder, /(?:FFMPEG|FFPROBE)_BINARY_SHA256/);
@@ -59,6 +64,8 @@ test("Windows builder performs exactly one clean build with strict validation", 
   assert.match(windowsBuilder, /required configuration/);
   assert.match(windowsBuilder, /does not contain the libx264 encoder/);
   assert.match(windowsBuilder, /does not contain the AAC encoder/);
+  assert.match(windowsBuilder, /--disable-stripping/);
+  assert.ok(windowsConfiguration.includes("--disable-stripping"));
   assert.doesNotMatch(windowsBuilder, /\$STRIP" --strip-all/);
   assert.doesNotMatch(windowsBuilder, /\bGet-FileHash\b/);
   assert.match(windowsBuilder, /\[System\.Security\.Cryptography\.SHA256\]::Create\(\)/);

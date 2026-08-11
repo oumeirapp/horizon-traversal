@@ -115,6 +115,7 @@
           "--enable-libx264",
           "--enable-static",
           "--disable-shared",
+          "--disable-stripping",
           "--disable-autodetect",
           "--disable-network"
         ],

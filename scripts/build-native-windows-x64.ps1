@@ -293,6 +293,7 @@ function Assert-Binary {
       "--enable-libx264",
       "--enable-static",
       "--disable-shared",
+      "--disable-stripping",
       "--disable-autodetect",
       "--disable-network"
     )) {
@@ -546,6 +547,7 @@ printf 'Building FFmpeg %s\n' '8.1.2'
     --enable-libx264 \
     --enable-static \
     --disable-shared \
+    --disable-stripping \
     --disable-autodetect \
     --disable-debug \
     --disable-doc \
@@ -561,7 +563,8 @@ printf 'Building FFmpeg %s\n' '8.1.2'
 for program in ffmpeg ffprobe; do
   source_binary="$HORIZON_SOURCE_ROOT/ffmpeg-8.1.2/${program}.exe"
   staged_binary="$HORIZON_STAGING_ROOT/${program}-x86_64-pc-windows-msvc.exe"
-  # FFmpeg's Makefile already strips this executable from its *_g.exe output.
+  # Stripping is disabled above so this remains a byte-for-byte copy of the
+  # linker-produced PE rather than passing through llvm-strip.
   install -m 0755 "$source_binary" "$staged_binary"
 done
 '@
