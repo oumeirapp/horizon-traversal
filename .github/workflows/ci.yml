@@ -111,6 +111,54 @@ jobs:
           $RustHost = @(rustc -vV | Where-Object { $_ -like "host:*" })
           if ($RustHost.Count -ne 1 -or $RustHost[0] -ne "host: x86_64-pc-windows-msvc") { throw "unexpected Rust host: $RustHost" }
       - run: npm ci
+      - name: Exercise Windows PowerShell 5.1 SHA-256 helper
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSEdition -ne "Desktop" -or $PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -lt 1) {
+            throw "this runtime check requires Windows PowerShell 5.1"
+          }
+
+          $BuilderPath = Join-Path $env:GITHUB_WORKSPACE "scripts\build-native-windows-x64.ps1"
+          $Tokens = $null
+          $ParseErrors = $null
+          $Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            $BuilderPath,
+            [ref]$Tokens,
+            [ref]$ParseErrors
+          )
+          if (@($ParseErrors).Count -ne 0) {
+            throw "Windows native builder has $(@($ParseErrors).Count) parse error(s)"
+          }
+          $HashFunctions = @(
+            $Ast.FindAll(
+              {
+                param($Node)
+                $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                  $Node.Name -eq "Get-Sha256"
+              },
+              $true
+            )
+          )
+          if ($HashFunctions.Count -ne 1) {
+            throw "expected exactly one Get-Sha256 function, found $($HashFunctions.Count)"
+          }
+          . ([scriptblock]::Create($HashFunctions[0].Extent.Text))
+
+          $FixturePath = Join-Path $env:RUNNER_TEMP "horizon-traversal-sha256-fixture"
+          try {
+            [IO.File]::WriteAllBytes($FixturePath, [byte[]](0x61, 0x62, 0x63))
+            $env:PSModulePath = ""
+            $PSModuleAutoLoadingPreference = "None"
+            $ActualSha256 = Get-Sha256 $FixturePath
+            $ExpectedSha256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            if ($ActualSha256 -ne $ExpectedSha256) {
+              throw "SHA-256 mismatch: expected $ExpectedSha256, received $ActualSha256"
+            }
+          } finally {
+            if ([IO.File]::Exists($FixturePath)) {
+              [IO.File]::Delete($FixturePath)
+            }
+          }
       - name: Restore pinned native inputs
         id: native-cache
         uses: actions/cache@v6

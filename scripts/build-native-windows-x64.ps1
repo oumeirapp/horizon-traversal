@@ -99,7 +99,23 @@ function Require-File {
 
 function Get-Sha256 {
   param([Parameter(Mandatory = $true)][string]$Path)
-  return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+
+  # This script is launched by Windows PowerShell from a pwsh/Node process.
+  # Use .NET directly because the inherited module path may not expose utility cmdlets.
+  $Stream = [System.IO.File]::OpenRead($Path)
+  try {
+    $HashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      $Digest = $HashAlgorithm.ComputeHash($Stream)
+      return [System.BitConverter]::ToString($Digest).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+      $HashAlgorithm.Dispose()
+    }
+  }
+  finally {
+    $Stream.Dispose()
+  }
 }
 
 function Download-Verified {

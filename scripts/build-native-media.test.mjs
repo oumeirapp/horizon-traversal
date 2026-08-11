@@ -50,5 +50,8 @@ test("Windows builder performs exactly one clean build with strict validation", 
   assert.match(windowsBuilder, /required configuration/);
   assert.match(windowsBuilder, /does not contain the libx264 encoder/);
   assert.match(windowsBuilder, /does not contain the AAC encoder/);
+  assert.doesNotMatch(windowsBuilder, /\bGet-FileHash\b/);
+  assert.match(windowsBuilder, /\[System\.Security\.Cryptography\.SHA256\]::Create\(\)/);
+  assert.match(windowsBuilder, /\.ComputeHash\(\$Stream\)/);
   assert.match(windowsBuilder, /Prepared \$Destination \(\$\(Get-Sha256/);
 });
