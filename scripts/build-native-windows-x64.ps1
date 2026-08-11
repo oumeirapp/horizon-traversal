@@ -204,9 +204,19 @@ function Invoke-NativeCapture {
     [Parameter(Mandatory = $true)][string[]]$Arguments
   )
 
-  $Output = & $Program @Arguments 2>&1
-  if ($LASTEXITCODE -ne 0) {
-    Fail "$(Split-Path -Leaf $Program) failed: $($Output -join [Environment]::NewLine)"
+  $Output = @(& $Program @Arguments 2>&1)
+  $ExitCode = $LASTEXITCODE
+  if ($ExitCode -ne 0) {
+    $ExitCodeHex = ([int32]$ExitCode).ToString(
+      "X8",
+      [Globalization.CultureInfo]::InvariantCulture
+    )
+    $Details = ($Output -join [Environment]::NewLine).Trim()
+    if ([string]::IsNullOrWhiteSpace($Details)) {
+      $Details = "no native output"
+    }
+    $ArgumentSummary = $Arguments -join " "
+    Fail "$(Split-Path -Leaf $Program) failed with exit code $ExitCode (0x$ExitCodeHex) while running [$ArgumentSummary]: $Details"
   }
   return ($Output -join [Environment]::NewLine)
 }
@@ -248,9 +258,7 @@ function Assert-SystemImports {
       }
     }
   }
-  if ($DiscoverImports) {
-    Write-Host "  $(Split-Path -Leaf $Binary) imports: $($ImportedNames -join ', ')"
-  }
+  Write-Host "  $(Split-Path -Leaf $Binary) imports: $($ImportedNames -join ', ')"
 }
 
 function Assert-Binary {
@@ -268,6 +276,9 @@ function Assert-Binary {
   if ($Headers -notmatch "Machine:\s+IMAGE_FILE_MACHINE_AMD64\s+\(0x8664\)") {
     Fail "$Program is not an x86-64 PE executable"
   }
+
+  # Reject undeclared loader dependencies before attempting to execute the PE.
+  Assert-SystemImports $ReadObj $Binary $AllowedImports $DeniedImports $DiscoverImports
 
   $VersionOutput = Invoke-NativeCapture $Binary @("-hide_banner", "-version")
   if (-not $VersionOutput.StartsWith("$Program version $FfmpegVersion")) {
@@ -289,8 +300,6 @@ function Assert-Binary {
       Fail "$Program was not built with required configuration $Option"
     }
   }
-
-  Assert-SystemImports $ReadObj $Binary $AllowedImports $DeniedImports $DiscoverImports
 }
 
 $NativeArchitecture = if ([string]::IsNullOrWhiteSpace($env:PROCESSOR_ARCHITEW6432)) {
@@ -552,8 +561,8 @@ printf 'Building FFmpeg %s\n' '8.1.2'
 for program in ffmpeg ffprobe; do
   source_binary="$HORIZON_SOURCE_ROOT/ffmpeg-8.1.2/${program}.exe"
   staged_binary="$HORIZON_STAGING_ROOT/${program}-x86_64-pc-windows-msvc.exe"
+  # FFmpeg's Makefile already strips this executable from its *_g.exe output.
   install -m 0755 "$source_binary" "$staged_binary"
-  "$STRIP" --strip-all "$staged_binary"
 done
 '@
 $Utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false

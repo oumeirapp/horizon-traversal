@@ -46,10 +46,20 @@ test("Windows builder performs exactly one clean build with strict validation", 
   );
   assert.match(windowsBuilder, /IMAGE_FILE_MACHINE_AMD64/);
   assert.match(windowsBuilder, /imports undeclared runtime/);
+  assert.match(windowsBuilder, /\$ExitCode = \$LASTEXITCODE/);
+  assert.match(
+    windowsBuilder,
+    /failed with exit code \$ExitCode \(0x\$ExitCodeHex\) while running/,
+  );
+  assert.match(
+    windowsBuilder,
+    /function Assert-Binary[\s\S]*Assert-SystemImports[\s\S]*\$VersionOutput = Invoke-NativeCapture/,
+  );
   assert.match(windowsBuilder, /did not report pinned version/);
   assert.match(windowsBuilder, /required configuration/);
   assert.match(windowsBuilder, /does not contain the libx264 encoder/);
   assert.match(windowsBuilder, /does not contain the AAC encoder/);
+  assert.doesNotMatch(windowsBuilder, /\$STRIP" --strip-all/);
   assert.doesNotMatch(windowsBuilder, /\bGet-FileHash\b/);
   assert.match(windowsBuilder, /\[System\.Security\.Cryptography\.SHA256\]::Create\(\)/);
   assert.match(windowsBuilder, /\.ComputeHash\(\$Stream\)/);
