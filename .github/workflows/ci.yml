@@ -31,7 +31,7 @@ jobs:
       - run: npm run build
 
   macos-arm64-quality:
-    name: Rust and native assets
+    name: macOS arm64 Rust and native assets
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
@@ -54,11 +54,12 @@ jobs:
           actual_clt=$(pkgutil --pkg-info-plist com.apple.pkg.CLTools_Executables | plutil -extract pkg-version raw -o - -)
           test "$actual_clt" = "$expected_clt"
           test "$(xcrun --sdk macosx --show-sdk-version)" = "$expected_sdk"
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: 1.96.0
-          components: rustfmt, clippy
-          target: aarch64-apple-darwin
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy --target aarch64-apple-darwin
+          rustup default 1.96.0
+          test "$(rustc --version)" = "rustc 1.96.0 (ac68faa20 2026-05-25)"
+          rustc -vV | grep -F -x 'host: aarch64-apple-darwin'
       - run: npm ci
       - name: Restore pinned native inputs
         id: native-cache
@@ -68,7 +69,7 @@ jobs:
             src-tauri/binaries/ffmpeg-aarch64-apple-darwin
             src-tauri/binaries/ffprobe-aarch64-apple-darwin
             src-tauri/resources/native/libpdfium.dylib
-          key: native-macos26-${{ runner.arch }}-${{ hashFiles('src-tauri/native-assets.json', 'scripts/build-native-macos-arm64.sh', 'scripts/prepare-pdfium.mjs') }}
+          key: native-macos26-arm64-${{ hashFiles('src-tauri/native-assets.json', 'scripts/build-native-macos-arm64.sh', 'scripts/prepare-ffmpeg.mjs', 'scripts/prepare-pdfium.mjs', 'scripts/verify-native-assets.mjs') }}
       - name: Prepare pinned native inputs
         if: steps.native-cache.outputs.cache-hit != 'true'
         run: |
@@ -81,8 +82,81 @@ jobs:
       - name: Check release shell scripts
         run: find scripts -type f -name '*.sh' -exec sh -n {} +
 
+  windows-x64-quality:
+    name: Windows x64 quality and native assets
+    runs-on: windows-2025
+    steps:
+      - name: Preserve pinned repository bytes during checkout
+        shell: powershell
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Assert pinned Node toolchain
+        shell: powershell
+        run: |
+          if ((node --version) -ne "v24.14.0") { throw "unexpected Node version" }
+          if ((npm --version) -ne "11.9.0") { throw "unexpected npm version" }
+          if ((node -p "process.arch") -ne "x64" -or -not [Environment]::Is64BitProcess) { throw "Windows job is not running natively as x64" }
+      - name: Install pinned Rust toolchain
+        shell: powershell
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw "rustup toolchain installation failed" }
+          rustup default 1.96.0
+          if ($LASTEXITCODE -ne 0) { throw "rustup default failed" }
+          if ((rustc --version) -ne "rustc 1.96.0 (ac68faa20 2026-05-25)") { throw "unexpected Rust version" }
+          $RustHost = @(rustc -vV | Where-Object { $_ -like "host:*" })
+          if ($RustHost.Count -ne 1 -or $RustHost[0] -ne "host: x86_64-pc-windows-msvc") { throw "unexpected Rust host: $RustHost" }
+      - run: npm ci
+      - name: Restore pinned native inputs
+        id: native-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe
+            src-tauri/binaries/ffprobe-x86_64-pc-windows-msvc.exe
+            src-tauri/resources/native/pdfium.dll
+          key: native-windows2025-x64-${{ hashFiles('src-tauri/native-assets.json', 'scripts/build-native-windows-x64.ps1', 'scripts/prepare-ffmpeg.mjs', 'scripts/prepare-pdfium.mjs', 'scripts/verify-native-assets.mjs') }}
+      - name: Prepare pinned native inputs
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: |
+          npm run prepare:pdfium
+          npm run prepare:ffmpeg
+      - run: npm run verify:native
+      - run: npm test
+      - run: npm run build
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-features
+      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+      - name: Parse checked-in PowerShell with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSEdition -ne "Desktop" -or $PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -lt 1) {
+            throw "this syntax check requires Windows PowerShell 5.1"
+          }
+          $AllErrors = @()
+          foreach ($Script in @(Get-ChildItem -LiteralPath scripts -Recurse -Filter "*.ps1" -File)) {
+            $Tokens = $null
+            $Errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $Script.FullName,
+              [ref]$Tokens,
+              [ref]$Errors
+            ) | Out-Null
+            foreach ($ParseError in @($Errors)) {
+              Write-Error "$($Script.FullName):$($ParseError.Extent.StartLineNumber): $($ParseError.Message)" -ErrorAction Continue
+              $AllErrors += $ParseError
+            }
+          }
+          if ($AllErrors.Count -ne 0) {
+            throw "$($AllErrors.Count) PowerShell parse error(s) found"
+          }
+
   macos-arm64-package:
-    name: Packaged workflow smoke
+    name: macOS arm64 ad-hoc package evidence (non-release)
     if: github.event_name == 'workflow_dispatch'
     needs: [frontend, macos-arm64-quality]
     runs-on: macos-26
@@ -107,43 +181,234 @@ jobs:
           actual_clt=$(pkgutil --pkg-info-plist com.apple.pkg.CLTools_Executables | plutil -extract pkg-version raw -o - -)
           test "$actual_clt" = "$expected_clt"
           test "$(xcrun --sdk macosx --show-sdk-version)" = "$expected_sdk"
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: 1.96.0
-          target: aarch64-apple-darwin
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal --target aarch64-apple-darwin
+          rustup default 1.96.0
+          test "$(rustc --version)" = "rustc 1.96.0 (ac68faa20 2026-05-25)"
+          rustc -vV | grep -F -x 'host: aarch64-apple-darwin'
       - run: npm ci
       - name: Restore pinned native inputs
+        id: native-cache
         uses: actions/cache@v6
         with:
           path: |
             src-tauri/binaries/ffmpeg-aarch64-apple-darwin
             src-tauri/binaries/ffprobe-aarch64-apple-darwin
             src-tauri/resources/native/libpdfium.dylib
-          key: native-macos26-${{ runner.arch }}-${{ hashFiles('src-tauri/native-assets.json', 'scripts/build-native-macos-arm64.sh', 'scripts/prepare-pdfium.mjs') }}
-          fail-on-cache-miss: true
-      - run: npm run verify:native
-      - name: Build and run packaged workflow smoke
-        run: npm run smoke:package
-        env:
-          HORIZON_TRAVERSAL_SMOKE_REPORT_PATH: ${{ github.workspace }}/dist/packaged-smoke-report.json
-      - run: npm run prepare:source-offer
-      - name: Verify corresponding-source archive
-        working-directory: dist/native-source-offer
-        run: shasum -a 256 -c SHA256SUMS
-      - name: Archive smoke bundle and corresponding source
+          key: native-macos26-arm64-${{ hashFiles('src-tauri/native-assets.json', 'scripts/build-native-macos-arm64.sh', 'scripts/prepare-ffmpeg.mjs', 'scripts/prepare-pdfium.mjs', 'scripts/verify-native-assets.mjs') }}
+      - name: Prepare pinned native inputs after a cache miss
+        if: steps.native-cache.outputs.cache-hit != 'true'
         run: |
-          ditto -c -k --sequesterRsrc --keepParent \
-            "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Horizon Traversal.app" \
-            "dist/Horizon-Traversal-smoke-app.zip"
-          ditto -c -k --keepParent \
-            "dist/native-source-offer" \
-            "dist/Horizon-Traversal-native-source.zip"
+          npm run prepare:pdfium
+          npm run prepare:ffmpeg
+      - run: npm run verify:native
+      - name: Build and run isolated smoke-feature package
+        run: |
+          mkdir -p src-tauri/target/release-artifacts/evidence
+          set -o pipefail
+          npm run smoke:package 2>&1 | tee src-tauri/target/release-artifacts/evidence/macos-package-smoke.log
+        env:
+          HORIZON_TRAVERSAL_SMOKE_REPORT_PATH: ${{ github.workspace }}/src-tauri/target/release-artifacts/evidence/macos-packaged-smoke-report.json
+      - name: Build normal ad-hoc macOS application and DMG
+        run: npm run bundle:macos
+      - name: Verify source offer and checksummed companion distribution
+        run: |
+          npm run verify:source-offer
+          node --input-type=module -e "import path from 'node:path'; import { verifyDistribution } from './scripts/lib/distribution-package.mjs'; await verifyDistribution({ root: process.cwd(), targetName: 'macos', cargoTargetDirectory: path.resolve('src-tauri/target') });"
+      - name: Inspect normal bundle and assert nested ad-hoc signatures
+        run: |
+          set -eu
+          mkdir -p src-tauri/target/release-artifacts/evidence
+          set -- src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
+          [ "$#" -eq 1 ] && [ -d "$1" ] || { echo "expected exactly one normal app bundle" >&2; exit 1; }
+          app=$1
+          set -- src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "expected exactly one normal DMG" >&2; exit 1; }
+          dmg=$1
+
+          scripts/inspect-bundle-macos-arm64.sh "$app" | tee src-tauri/target/release-artifacts/evidence/macos-bundle-inspection.txt
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign --verify --strict --verbose=2 "$dmg"
+
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
+          for code in \
+            "$app" \
+            "$app/Contents/MacOS/$executable" \
+            "$app/Contents/MacOS/ffmpeg" \
+            "$app/Contents/MacOS/ffprobe" \
+            "$app/Contents/Frameworks/libpdfium.dylib" \
+            "$dmg"
+          do
+            details=$(codesign -d --verbose=4 "$code" 2>&1)
+            printf '%s\n' "$details"
+            printf '%s\n' "$details" | grep -F 'Signature=adhoc' >/dev/null
+            if printf '%s\n' "$details" | grep -E '^Authority=' >/dev/null; then
+              echo "unexpected trusted signing authority on $code" >&2
+              exit 1
+            fi
+            if printf '%s\n' "$details" | grep -E '^CodeDirectory .*flags=.*runtime' >/dev/null; then
+              echo "hardened runtime is unexpectedly enabled on $code" >&2
+              exit 1
+            fi
+          done
+
+          ditto -c -k --sequesterRsrc --keepParent "$app" src-tauri/target/release-artifacts/Horizon-Traversal-macos-aarch64-app.zip
+          (cd src-tauri/target/release-artifacts && shasum -a 256 Horizon-Traversal-macos-aarch64-app.zip > Horizon-Traversal-macos-aarch64-app.zip.sha256)
+          (cd src-tauri/target/release-artifacts && shasum -a 256 -c Horizon-Traversal-macos-aarch64-app.zip.sha256)
+      - name: Inspect mounted DMG contents
+        run: |
+          set -eu
+          set -- src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "expected exactly one normal DMG" >&2; exit 1; }
+          dmg=$1
+          attach_plist=$(mktemp)
+          mount_point=
+          cleanup() {
+            if [ -n "$mount_point" ]; then
+              hdiutil detach "$mount_point" >/dev/null
+            fi
+            rm -f "$attach_plist"
+          }
+          trap cleanup EXIT
+          trap 'exit 1' HUP INT TERM
+          hdiutil attach -readonly -nobrowse -plist "$dmg" > "$attach_plist"
+          mount_point=$(plutil -convert json -o - "$attach_plist" | node -e '
+            const fs = require("node:fs");
+            const value = JSON.parse(fs.readFileSync(0, "utf8"));
+            const points = value["system-entities"].flatMap((entry) => entry["mount-point"] ? [entry["mount-point"]] : []);
+            if (points.length !== 1) throw new Error(`expected one mounted volume, received ${points.length}`);
+            process.stdout.write(points[0]);
+          ')
+          mounted_app="$mount_point/Horizon Traversal.app"
+          [ -d "$mounted_app" ] || { echo "DMG does not contain Horizon Traversal.app" >&2; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$mounted_app"
+          scripts/inspect-bundle-macos-arm64.sh "$mounted_app" | tee src-tauri/target/release-artifacts/evidence/macos-mounted-dmg-inspection.txt
+      - name: Assert expected Gatekeeper rejection for the unnotarized app
+        run: |
+          set -eu
+          set -- src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
+          [ "$#" -eq 1 ] && [ -d "$1" ] || { echo "expected exactly one normal app bundle" >&2; exit 1; }
+          set +e
+          spctl --assess --type execute --verbose=4 "$1" > src-tauri/target/release-artifacts/evidence/macos-gatekeeper-assessment.txt 2>&1
+          status=$?
+          set -e
+          cat src-tauri/target/release-artifacts/evidence/macos-gatekeeper-assessment.txt
+          if [ "$status" -eq 0 ]; then
+            echo "Gatekeeper unexpectedly accepted the unnotarized ad-hoc application" >&2
+            exit 1
+          fi
+          printf 'Expected rejection observed (spctl exit %s).\n' "$status" >> src-tauri/target/release-artifacts/evidence/macos-gatekeeper-assessment.txt
       - uses: actions/upload-artifact@v7
         with:
-          name: horizon-traversal-packaged-smoke-not-for-release
+          name: horizon-traversal-macos-arm64-adhoc-unnotarized-non-release
           path: |
-            dist/Horizon-Traversal-smoke-app.zip
-            dist/Horizon-Traversal-native-source.zip
-            dist/packaged-smoke-report.json
+            src-tauri/target/release-artifacts/macos-aarch64/**
+            src-tauri/target/release-artifacts/Horizon-Traversal-macos-aarch64-app.zip
+            src-tauri/target/release-artifacts/Horizon-Traversal-macos-aarch64-app.zip.sha256
+            src-tauri/target/release-artifacts/evidence/**
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-x64-package:
+    name: Windows x64 unsigned package evidence (non-release)
+    if: github.event_name == 'workflow_dispatch'
+    needs: [frontend, windows-x64-quality]
+    runs-on: windows-2025
+    steps:
+      - name: Preserve pinned repository bytes during checkout
+        shell: powershell
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Assert pinned Node toolchain
+        shell: powershell
+        run: |
+          if ((node --version) -ne "v24.14.0") { throw "unexpected Node version" }
+          if ((npm --version) -ne "11.9.0") { throw "unexpected npm version" }
+          if ((node -p "process.arch") -ne "x64" -or -not [Environment]::Is64BitProcess) { throw "Windows job is not running natively as x64" }
+      - name: Install pinned Rust toolchain
+        shell: powershell
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw "rustup toolchain installation failed" }
+          rustup default 1.96.0
+          if ($LASTEXITCODE -ne 0) { throw "rustup default failed" }
+          if ((rustc --version) -ne "rustc 1.96.0 (ac68faa20 2026-05-25)") { throw "unexpected Rust version" }
+          $RustHost = @(rustc -vV | Where-Object { $_ -like "host:*" })
+          if ($RustHost.Count -ne 1 -or $RustHost[0] -ne "host: x86_64-pc-windows-msvc") { throw "unexpected Rust host: $RustHost" }
+      - run: npm ci
+      - name: Restore pinned native inputs
+        id: native-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe
+            src-tauri/binaries/ffprobe-x86_64-pc-windows-msvc.exe
+            src-tauri/resources/native/pdfium.dll
+          key: native-windows2025-x64-${{ hashFiles('src-tauri/native-assets.json', 'scripts/build-native-windows-x64.ps1', 'scripts/prepare-ffmpeg.mjs', 'scripts/prepare-pdfium.mjs', 'scripts/verify-native-assets.mjs') }}
+      - name: Prepare pinned native inputs after a cache miss
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: |
+          npm run prepare:pdfium
+          npm run prepare:ffmpeg
+      - run: npm run verify:native
+      - name: Build, install, inspect, run, and uninstall isolated smoke package
+        shell: powershell
+        run: |
+          $EvidenceDirectory = Join-Path $env:GITHUB_WORKSPACE "src-tauri\target\release-artifacts\evidence"
+          New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
+          $PreviousErrorActionPreference = $ErrorActionPreference
+          try {
+            # Windows PowerShell 5.1 wraps native stderr as non-terminating
+            # error records. Preserve the combined log, then trust the native
+            # process exit code rather than treating normal Cargo output as a
+            # PowerShell failure.
+            $ErrorActionPreference = "Continue"
+            npm.cmd run smoke:package 2>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "windows-package-smoke.log")
+            $SmokeExitCode = $LASTEXITCODE
+          } finally {
+            $ErrorActionPreference = $PreviousErrorActionPreference
+          }
+          if ($SmokeExitCode -ne 0) { throw "Windows package smoke failed with status $SmokeExitCode" }
+        env:
+          HORIZON_TRAVERSAL_SMOKE_REPORT_PATH: ${{ github.workspace }}/src-tauri/target/release-artifacts/evidence/windows-packaged-smoke-report.json
+          HORIZON_TRAVERSAL_INSPECTION_REPORT_PATH: ${{ github.workspace }}/src-tauri/target/release-artifacts/evidence/windows-smoke-bundle-inspection.json
+      - name: Build normal unsigned current-user NSIS distribution
+        run: npm run bundle:windows
+      - name: Verify source offer and checksummed companion distribution
+        run: |
+          npm run verify:source-offer
+          node --input-type=module -e "import path from 'node:path'; import { verifyDistribution } from './scripts/lib/distribution-package.mjs'; await verifyDistribution({ root: process.cwd(), targetName: 'windows', cargoTargetDirectory: path.resolve('src-tauri/target') });"
+      - name: Assert normal installer is unsigned
+        shell: powershell
+        run: |
+          $Distribution = Join-Path $env:GITHUB_WORKSPACE "src-tauri\target\release-artifacts\windows-x64"
+          $Installers = @(Get-ChildItem -LiteralPath $Distribution -Filter "*.exe" -File)
+          if ($Installers.Count -ne 1) {
+            throw "expected exactly one normal NSIS installer, found $($Installers.Count)"
+          }
+          $Signature = Get-AuthenticodeSignature -LiteralPath $Installers[0].FullName
+          if ($Signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
+            throw "normal NSIS installer must be unsigned; signature status is $($Signature.Status)"
+          }
+          $EvidenceDirectory = Join-Path $env:GITHUB_WORKSPACE "src-tauri\target\release-artifacts\evidence"
+          New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
+          [ordered]@{
+            schemaVersion = 1
+            installer = $Installers[0].Name
+            authenticodeStatus = $Signature.Status.ToString()
+            publisherTrust = "none"
+            smartScreenExpectation = "Unknown publisher warning may appear; online SmartScreen reputation UI is not invoked by CI."
+          } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $EvidenceDirectory "windows-normal-installer-signature.json") -Encoding UTF8
+      - uses: actions/upload-artifact@v7
+        with:
+          name: horizon-traversal-windows-x64-unsigned-non-release
+          path: |
+            src-tauri/target/release-artifacts/windows-x64/**
+            src-tauri/target/release-artifacts/evidence/**
           if-no-files-found: error
           retention-days: 7

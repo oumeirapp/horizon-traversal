@@ -28,6 +28,9 @@ npm run prepare:pdfium
 npm run prepare:ffmpeg
 npm run verify:native
 npm run tauri dev
+npm run bundle:macos
+npm run bundle:windows
+npm run verify:source-offer
 npm test
 npm run build
 cargo test --locked --manifest-path src-tauri/Cargo.toml --all-features
@@ -48,8 +51,8 @@ cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-f
 - Run blocking filesystem/media work outside the UI thread and keep ticket
   failures isolated.
 - Skip symlinks and reject overlapping input/output paths.
-- Preserve cross-platform path handling even while macOS arm64 is the pinned
-  release target.
+- Preserve cross-platform path handling for the pinned macOS arm64 and Windows
+  x64 bundle targets.
 
 ## UI rules
 
@@ -67,6 +70,10 @@ cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-f
   Tauri bundle declarations synchronized with `src-tauri/native-assets.json`.
 - Always run `npm run verify:native` before native tests or packaging.
 - Treat `npm run smoke:package` output as non-release test evidence.
+- Keep normal bundle artifacts under `src-tauri/target/release-artifacts/`,
+  separate from Vite's root `dist/` output and isolated smoke builds.
+- Treat the current ad-hoc macOS and unsigned Windows bundles as unverified,
+  non-release distributions; never advise disabling Gatekeeper or SmartScreen.
 - A production release must be properly signed/notarized and must publish the
   verified FFmpeg/x264 corresponding-source package in a durable location.
 
