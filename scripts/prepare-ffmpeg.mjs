@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import {
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -17,7 +18,8 @@ import { spawn, spawnSync } from "node:child_process";
 
 import extract from "extract-zip";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const ROOT = path.resolve(path.dirname(SCRIPT_PATH), "..");
 const MACOS_TARGET = "aarch64-apple-darwin";
 const WINDOWS_TARGET = "x86_64-pc-windows-msvc";
 const MANIFEST_PATH = path.join(ROOT, "src-tauri", "native-assets.json");
@@ -166,6 +168,18 @@ function runCaptured(command, args, options = {}) {
   return result.stdout.trim();
 }
 
+function runCapturedIfSuccessful(command, args) {
+  const result = spawnSync(command, args, {
+    cwd: ROOT,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (result.error || result.status !== 0) {
+    return null;
+  }
+  return `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
+}
+
 async function assertWindowsManifestPins() {
   const manifest = JSON.parse(await readFile(MANIFEST_PATH, "utf8"));
   const declared = manifest.toolchains?.[WINDOWS_TARGET];
@@ -189,22 +203,36 @@ async function assertWindowsManifestPins() {
 
   const target = manifest.targets?.[WINDOWS_TARGET];
   if (!target) {
-    fail(`native-assets.json has no output pins for ${WINDOWS_TARGET}`);
+    fail(`native-assets.json has no target definition for ${WINDOWS_TARGET}`);
   }
   return target;
 }
 
-async function preparedBinariesMatch(target, targetTriple) {
+export async function preparedBinariesReady(
+  target,
+  root = ROOT,
+  capture = runCapturedIfSuccessful,
+) {
+  const binaries = new Map();
+  const requiredConfiguration = target.ffmpeg?.requiredConfiguration ?? [];
   for (const [program, asset] of [
-    ["FFmpeg", target.ffmpeg],
-    ["FFprobe", target.ffprobe],
+    ["ffmpeg", target.ffmpeg],
+    ["ffprobe", target.ffprobe],
   ]) {
-    if (!asset || !/^[a-f0-9]{64}$/.test(asset.sha256 ?? "")) {
-      fail(`native-assets.json has no valid ${program} output hash for ${targetTriple}`);
+    if (
+      !asset ||
+      typeof asset.path !== "string" ||
+      typeof asset.version !== "string"
+    ) {
+      return false;
     }
-    const binary = path.join(ROOT, ...asset.path.split("/"));
+    const binary = path.join(root, ...asset.path.split("/"));
     try {
-      if (!(await stat(binary)).isFile() || (await sha256(binary)) !== asset.sha256) {
+      const metadata = await lstat(binary);
+      if (metadata.isSymbolicLink() || !metadata.isFile()) {
+        return false;
+      }
+      if (process.platform !== "win32" && (metadata.mode & 0o111) === 0) {
         return false;
       }
     } catch (error) {
@@ -212,6 +240,50 @@ async function preparedBinariesMatch(target, targetTriple) {
         return false;
       }
       throw error;
+    }
+
+    let versionOutput;
+    try {
+      versionOutput = capture(binary, ["-hide_banner", "-version"]);
+    } catch {
+      return false;
+    }
+    const firstLine = versionOutput?.split(/\r?\n/, 1)[0];
+    if (!firstLine?.startsWith(`${program} version ${asset.version} `)) {
+      return false;
+    }
+    for (const option of requiredConfiguration) {
+      if (!versionOutput.includes(option)) {
+        return false;
+      }
+    }
+    binaries.set(program, binary);
+  }
+
+  const requiredEncoders = target.ffmpeg.requiredEncoders ?? [];
+  if (requiredEncoders.length > 0) {
+    let encoderOutput;
+    try {
+      encoderOutput = capture(binaries.get("ffmpeg"), [
+        "-hide_banner",
+        "-encoders",
+      ]);
+    } catch {
+      return false;
+    }
+    if (typeof encoderOutput !== "string") {
+      return false;
+    }
+    const encoderNames = new Set(
+      encoderOutput
+        .split(/\r?\n/)
+        .map((line) => /^\s*[VAS]\S{5}\s+(\S+)/.exec(line)?.[1])
+        .filter(Boolean),
+    );
+    for (const encoder of requiredEncoders) {
+      if (!encoderNames.has(encoder)) {
+        return false;
+      }
     }
   }
   return true;
@@ -222,7 +294,7 @@ async function prepareWindows() {
     fail(`Windows media preparation requires x64; received ${process.arch}`);
   }
   const target = await assertWindowsManifestPins();
-  if (await preparedBinariesMatch(target, WINDOWS_TARGET)) {
+  if (await preparedBinariesReady(target)) {
     console.log(`FFmpeg and FFprobe are already prepared for ${WINDOWS_TARGET}.`);
     return;
   }
@@ -377,9 +449,9 @@ async function main() {
     const manifest = JSON.parse(await readFile(MANIFEST_PATH, "utf8"));
     const target = manifest.targets?.[MACOS_TARGET];
     if (!target) {
-      fail(`native-assets.json has no output pins for ${MACOS_TARGET}`);
+      fail(`native-assets.json has no target definition for ${MACOS_TARGET}`);
     }
-    if (await preparedBinariesMatch(target, MACOS_TARGET)) {
+    if (await preparedBinariesReady(target)) {
       console.log(`FFmpeg and FFprobe are already prepared for ${MACOS_TARGET}.`);
       return;
     }
@@ -398,7 +470,9 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  console.error(`FFmpeg preparation failed: ${error.message}`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === SCRIPT_PATH) {
+  main().catch((error) => {
+    console.error(`FFmpeg preparation failed: ${error.message}`);
+    process.exitCode = 1;
+  });
+}

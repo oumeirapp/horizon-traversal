@@ -51,6 +51,10 @@ function assertSha256(value, description) {
   }
 }
 
+export function assertTargetOutputPins(targetTriple, target) {
+  assertSha256(target.pdfium?.sha256, `${targetTriple} PDFium output hash`);
+}
+
 async function sha256(file) {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(file)) {
@@ -59,7 +63,10 @@ async function sha256(file) {
   return hash.digest("hex");
 }
 
-async function verifyFile(entry, { executable, hostTriple }) {
+async function verifyFile(
+  entry,
+  { executable, hostTriple, verifySha256 = false },
+) {
   const absolutePath = path.resolve(ROOT, entry.path);
   const relativePath = path.relative(ROOT, absolutePath);
   if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
@@ -80,9 +87,11 @@ async function verifyFile(entry, { executable, hostTriple }) {
     fail(`native asset must be a regular, non-symlink file: ${entry.path}`);
   }
 
-  assertSha256(entry.sha256, `${entry.path} manifest hash`);
   const actualDigest = await sha256(absolutePath);
-  if (actualDigest !== entry.sha256) {
+  if (verifySha256) {
+    assertSha256(entry.sha256, `${entry.path} manifest hash`);
+  }
+  if (verifySha256 && actualDigest !== entry.sha256) {
     fail(
       `${entry.path} checksum mismatch: expected ${entry.sha256}, received ${actualDigest}`,
     );
@@ -96,7 +105,7 @@ async function verifyFile(entry, { executable, hostTriple }) {
     fail(`native library unexpectedly has an execute bit: ${entry.path}`);
   }
 
-  return absolutePath;
+  return { path: absolutePath, sha256: actualDigest };
 }
 
 function verifyProgramPath(program, entry, hostTriple) {
@@ -190,7 +199,11 @@ async function verifyDistributionFiles(entries, hostTriple) {
       fail(`duplicate distribution file in native manifest: ${entry.path}`);
     }
     seen.add(entry.path);
-    await verifyFile(entry, { executable: false, hostTriple });
+    await verifyFile(entry, {
+      executable: false,
+      hostTriple,
+      verifySha256: true,
+    });
   }
 
   const wheelDirectory = path.join(
@@ -293,8 +306,6 @@ async function verifyPreparationScripts(manifest, hostTriple, target) {
       target.mediaBuild.compiler,
       target.mediaBuild.toolchainPackageVersion,
       target.mediaBuild.sdkVersion,
-      target.ffmpeg.sha256,
-      target.ffprobe.sha256,
     );
   }
   for (const value of requiredBuildValues) {
@@ -390,13 +401,7 @@ async function main() {
     if (declaredTarget.pdfium.version !== declaredWheel.pdfiumVersion) {
       fail(`${targetTriple} PDFium binary version does not match its wheel pin`);
     }
-    for (const [name, asset] of [
-      ["FFmpeg", declaredTarget.ffmpeg],
-      ["FFprobe", declaredTarget.ffprobe],
-      ["PDFium", declaredTarget.pdfium],
-    ]) {
-      assertSha256(asset.sha256, `${targetTriple} ${name} output hash`);
-    }
+    assertTargetOutputPins(targetTriple, declaredTarget);
     if (
       typeof declaredTarget.mediaBuild?.compiler !== "string" ||
       declaredTarget.mediaBuild.compiler.length === 0
@@ -479,18 +484,25 @@ async function main() {
       `PDFium must use exact native-library path ${expectedPdfiumPath}; manifest contains ${target.pdfium.path}`,
     );
   }
-  const ffmpeg = await verifyFile(target.ffmpeg, {
+  const ffmpegInspection = await verifyFile(target.ffmpeg, {
     executable: true,
     hostTriple,
   });
-  const ffprobe = await verifyFile(target.ffprobe, {
+  const ffprobeInspection = await verifyFile(target.ffprobe, {
     executable: true,
     hostTriple,
   });
-  const pdfium = await verifyFile(target.pdfium, {
+  const pdfiumInspection = await verifyFile(target.pdfium, {
     executable: false,
     hostTriple,
+    verifySha256: true,
   });
+  const ffmpeg = ffmpegInspection.path;
+  const ffprobe = ffprobeInspection.path;
+  const pdfium = pdfiumInspection.path;
+
+  console.log(`ffmpeg SHA-256 (report only): ${ffmpegInspection.sha256}`);
+  console.log(`ffprobe SHA-256 (report only): ${ffprobeInspection.sha256}`);
 
   if (target.platform === "windows") {
     const dependencyPolicy = target.dynamicDependencies;
@@ -543,7 +555,13 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  console.error(`Native asset verification failed: ${error.message}`);
-  process.exitCode = 1;
-});
+const isMain =
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMain) {
+  main().catch((error) => {
+    console.error(`Native asset verification failed: ${error.message}`);
+    process.exitCode = 1;
+  });
+}

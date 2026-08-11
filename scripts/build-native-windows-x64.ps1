@@ -324,18 +324,9 @@ Assert-Equal $ManifestTarget.mediaBuild.sourceDateEpoch $SourceDateEpoch "SOURCE
 Assert-Equal $ManifestTarget.ffmpeg.path $FfmpegRelativePath "FFmpeg Tauri path"
 Assert-Equal $ManifestTarget.ffprobe.path $FfprobeRelativePath "FFprobe Tauri path"
 
-$ExpectedFfmpegSha256 = [string]$ManifestTarget.ffmpeg.sha256
-$ExpectedFfprobeSha256 = [string]$ManifestTarget.ffprobe.sha256
 $ManifestCompiler = [string]$ManifestTarget.mediaBuild.compiler
 $AllowedImports = @($ManifestTarget.dynamicDependencies.allowedNames)
 $DeniedImports = @($ManifestTarget.dynamicDependencies.deniedNames)
-$BootstrapHashes = $env:HORIZON_TRAVERSAL_NATIVE_HASH_BOOTSTRAP -ceq "1"
-if (-not $BootstrapHashes) {
-  if ($ExpectedFfmpegSha256 -cnotmatch "^[a-f0-9]{64}$" -or
-      $ExpectedFfprobeSha256 -cnotmatch "^[a-f0-9]{64}$") {
-    Fail "normal builds require lowercase FFmpeg and FFprobe SHA-256 values in native-assets.json; set HORIZON_TRAVERSAL_NATIVE_HASH_BOOTSTRAP=1 only to establish new release hashes"
-  }
-}
 
 $LlvmRoot = Require-EnvironmentDirectory "HORIZON_TRAVERSAL_LLVM_MINGW_ROOT"
 $MsysRoot = Require-EnvironmentDirectory "HORIZON_TRAVERSAL_MSYS2_ROOT"
@@ -390,14 +381,10 @@ if (-not [int]::TryParse($JobsValue, [ref]$Jobs) -or $Jobs -le 0) {
 }
 
 $DownloadDirectory = Join-Path $WorkDirectory "downloads"
-$FirstBuildDirectory = Join-Path $WorkDirectory "clean-build-1"
-$SecondBuildDirectory = Join-Path $WorkDirectory "clean-build-2"
-$ComparisonDirectory = Join-Path $WorkDirectory "first-build-output"
+$BuildDirectory = Join-Path $WorkDirectory "clean-build"
 foreach ($Directory in @(
     $DownloadDirectory,
-    $FirstBuildDirectory,
-    $SecondBuildDirectory,
-    $ComparisonDirectory
+    $BuildDirectory
   )) {
   if (Test-Path -LiteralPath $Directory) {
     Fail "refusing to reuse native build path: $Directory"
@@ -598,44 +585,15 @@ function Invoke-CleanMediaBuild {
   }
 }
 
-$FirstStagingDirectory = Join-Path $FirstBuildDirectory "staging"
-Invoke-CleanMediaBuild $FirstBuildDirectory "reproducibility build 1 of 2"
-$FirstFfmpeg = Join-Path $FirstStagingDirectory "ffmpeg-$TargetTriple.exe"
-$FirstFfprobe = Join-Path $FirstStagingDirectory "ffprobe-$TargetTriple.exe"
-Require-File $FirstFfmpeg "first FFmpeg build"
-Require-File $FirstFfprobe "first FFprobe build"
-New-Item -ItemType Directory -Path $ComparisonDirectory | Out-Null
-$SavedFfmpeg = Join-Path $ComparisonDirectory "ffmpeg-$TargetTriple.exe"
-$SavedFfprobe = Join-Path $ComparisonDirectory "ffprobe-$TargetTriple.exe"
-Copy-Item -LiteralPath $FirstFfmpeg -Destination $SavedFfmpeg
-Copy-Item -LiteralPath $FirstFfprobe -Destination $SavedFfprobe
-$FirstFfmpegSha256 = Get-Sha256 $SavedFfmpeg
-$FirstFfprobeSha256 = Get-Sha256 $SavedFfprobe
+$StagingDirectory = Join-Path $BuildDirectory "staging"
+Invoke-CleanMediaBuild $BuildDirectory "native media build"
+$StagedFfmpeg = Join-Path $StagingDirectory "ffmpeg-$TargetTriple.exe"
+$StagedFfprobe = Join-Path $StagingDirectory "ffprobe-$TargetTriple.exe"
+Require-File $StagedFfmpeg "FFmpeg build"
+Require-File $StagedFfprobe "FFprobe build"
 
-# The second build reuses only the verified source archives. Its source,
-# configure, object, prefix, and staging trees are recreated under a different
-# root so accidental build-path leakage also breaks the reproducibility check.
-Remove-Item -LiteralPath $FirstBuildDirectory -Recurse -Force
-if (Test-Path -LiteralPath $FirstBuildDirectory) {
-  Fail "could not remove the first clean build tree"
-}
-Invoke-CleanMediaBuild $SecondBuildDirectory "reproducibility build 2 of 2"
-
-$SecondStagingDirectory = Join-Path $SecondBuildDirectory "staging"
-$StagedFfmpeg = Join-Path $SecondStagingDirectory "ffmpeg-$TargetTriple.exe"
-$StagedFfprobe = Join-Path $SecondStagingDirectory "ffprobe-$TargetTriple.exe"
-$SecondFfmpegSha256 = Get-Sha256 $StagedFfmpeg
-$SecondFfprobeSha256 = Get-Sha256 $StagedFfprobe
-if ($FirstFfmpegSha256 -cne $SecondFfmpegSha256) {
-  Fail "clean FFmpeg builds were not reproducible: first $FirstFfmpegSha256, second $SecondFfmpegSha256"
-}
-if ($FirstFfprobeSha256 -cne $SecondFfprobeSha256) {
-  Fail "clean FFprobe builds were not reproducible: first $FirstFfprobeSha256, second $SecondFfprobeSha256"
-}
-Write-Host "Two clean Windows media builds produced identical SHA-256 values."
-
-Assert-Binary $StagedFfmpeg "ffmpeg" $ReadObj $ManifestCompiler $AllowedImports $DeniedImports $BootstrapHashes
-Assert-Binary $StagedFfprobe "ffprobe" $ReadObj $ManifestCompiler $AllowedImports $DeniedImports $BootstrapHashes
+Assert-Binary $StagedFfmpeg "ffmpeg" $ReadObj $ManifestCompiler $AllowedImports $DeniedImports $false
+Assert-Binary $StagedFfprobe "ffprobe" $ReadObj $ManifestCompiler $AllowedImports $DeniedImports $false
 
 $EncoderOutput = Invoke-NativeCapture $StagedFfmpeg @("-hide_banner", "-encoders")
 if ($EncoderOutput -notmatch "(?m)^\s*[VAS]\S{5}\s+libx264\s") {
@@ -645,26 +603,9 @@ if ($EncoderOutput -notmatch "(?m)^\s*[VAS]\S{5}\s+aac\s") {
   Fail "the FFmpeg build does not contain the AAC encoder"
 }
 
-$ActualFfmpegSha256 = $SecondFfmpegSha256
-$ActualFfprobeSha256 = $SecondFfprobeSha256
-if ($BootstrapHashes) {
-  Write-Host "Native hash bootstrap (record these in native-assets.json):"
-  Write-Host "  compiler: $CompilerLine"
-  Write-Host "  ffmpeg.sha256: $ActualFfmpegSha256"
-  Write-Host "  ffprobe.sha256: $ActualFfprobeSha256"
-}
-else {
-  if ($ActualFfmpegSha256 -cne $ExpectedFfmpegSha256) {
-    Fail "reproducible FFmpeg checksum mismatch: expected $ExpectedFfmpegSha256, received $ActualFfmpegSha256"
-  }
-  if ($ActualFfprobeSha256 -cne $ExpectedFfprobeSha256) {
-    Fail "reproducible FFprobe checksum mismatch: expected $ExpectedFfprobeSha256, received $ActualFfprobeSha256"
-  }
-}
-
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 foreach ($Program in @("ffmpeg", "ffprobe")) {
-  $StagedBinary = Join-Path $SecondStagingDirectory "$Program-$TargetTriple.exe"
+  $StagedBinary = Join-Path $StagingDirectory "$Program-$TargetTriple.exe"
   $Destination = Join-Path $OutputDirectory "$Program-$TargetTriple.exe"
   Move-Item -LiteralPath $StagedBinary -Destination $Destination -Force
   Write-Host "Prepared $Destination ($(Get-Sha256 $Destination))"

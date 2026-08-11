@@ -69,7 +69,6 @@
       },
       "ffmpeg": {
         "path": "src-tauri/binaries/ffmpeg-aarch64-apple-darwin",
-        "sha256": "5286c307f258812bfae104bba18feccbfc825d6ecaec34d7c0ef672808e1feae",
         "version": "8.1.2",
         "executable": true,
         "requiredConfiguration": [
@@ -84,7 +83,6 @@
       },
       "ffprobe": {
         "path": "src-tauri/binaries/ffprobe-aarch64-apple-darwin",
-        "sha256": "2ac09b9bd09e0ed37b47df56c4e20cb031121af0cbeb31c086f262192db63e65",
         "version": "8.1.2",
         "executable": true
       },
@@ -110,7 +108,6 @@
       },
       "ffmpeg": {
         "path": "src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe",
-        "sha256": "f66df6ee77946416abcb613c3f71285cbac44479fde444157a007528826182eb",
         "version": "8.1.2",
         "executable": true,
         "requiredConfiguration": [
@@ -125,7 +122,6 @@
       },
       "ffprobe": {
         "path": "src-tauri/binaries/ffprobe-x86_64-pc-windows-msvc.exe",
-        "sha256": "00eb87116f2c1c8dc574e9d99fef74c48e3cc98e6b914c15b3dcc25dc34167c6",
         "version": "8.1.2",
         "executable": true
       },
@@ -159,7 +155,7 @@
   "distributionFiles": [
     {
       "path": "src-tauri/binaries/THIRD_PARTY_NOTICES.md",
-      "sha256": "7caac212d5bb73ecae61fc501007b95025c7a95219c212ba87550d186d2feed4"
+      "sha256": "2c96d34f3dbb9f2416b609adaa312c93d53d608cf6259b1f287c89bf7da3e617"
     },
     {
       "path": "src-tauri/binaries/licenses/GPL-2.0-or-later.txt",

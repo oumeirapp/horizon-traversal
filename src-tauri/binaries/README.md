@@ -36,9 +36,12 @@ pinned LLVM-MinGW UCRT, MSYS2 base, GNU Make, and NASM inputs without using
 rolling packages. Both builders download the exact FFmpeg and x264 archives
 listed in `THIRD_PARTY_NOTICES.md`, verify every SHA-256 before extraction,
 disable third-party autodetection, and reject undeclared dynamic dependencies.
-The release output is reproducible only with the compilers, system versions,
-and source epoch recorded in `../native-assets.json`; each builder verifies its
-final binary hashes before installation.
+Release output must use the compilers, system versions, and source epoch
+recorded in `../native-assets.json`. Source, toolchain-input, PDFium, and
+distribution-file hashes remain pinned. Generated FFmpeg and FFprobe
+executables are temporarily not byte-pinned; their versions, configuration,
+codecs, and dynamic dependencies are semantically verified, and their actual
+SHA-256 hashes are reported for audit.
 
 A release build must prepare and verify the native files before invoking
 Tauri:

@@ -66,8 +66,12 @@ cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-f
 ## Native packaging
 
 - FFmpeg/FFprobe run only from Rust and remain suffix-free in `externalBin`.
-- Keep source pins, toolchain identity, output hashes, license resources, and
-  Tauri bundle declarations synchronized with `src-tauri/native-assets.json`.
+- Keep source, toolchain-input, PDFium, and distribution-file hashes, toolchain
+  identity, license resources, and Tauri bundle declarations synchronized with
+  `src-tauri/native-assets.json`.
+- Generated FFmpeg/FFprobe executables are temporarily not byte-pinned.
+  Semantically verify their versions, configuration, codecs, and dynamic
+  dependencies, and report their actual SHA-256 hashes for audit.
 - Always run `npm run verify:native` before native tests or packaging.
 - Treat `npm run smoke:package` output as non-release test evidence.
 - Keep normal bundle artifacts under `src-tauri/target/release-artifacts/`,

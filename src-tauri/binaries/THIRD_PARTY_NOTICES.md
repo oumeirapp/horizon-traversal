@@ -66,10 +66,14 @@ The two checksum-pinned archives above are distributed in
 
 Together these are the source and build instructions for the unmodified native
 programs distributed for Apple Silicon macOS and Windows x64. The native asset
-manifest records the exact target toolchains, build options, output hashes, and
-system dependency allowlists. `SHA256SUMS` covers every file in the source
-offer, and `npm run verify:source-offer` checks both the directory and the
-deterministic ZIP against the repository and source pins.
+manifest records the exact target toolchains, build options, and system
+dependency allowlists. Source, toolchain-input, PDFium, and distribution-file
+hashes remain pinned. Generated FFmpeg and FFprobe executables are temporarily
+not byte-pinned; their versions, configuration, codecs, and dynamic dependencies
+are semantically verified, and their actual SHA-256 hashes are reported for
+audit. `SHA256SUMS` covers every file in the source offer, and
+`npm run verify:source-offer` checks both the directory and the deterministic
+ZIP against the repository and source pins.
 
 Release publishers must make this verified archive available alongside every
 binary release for as long as that release is distributed. Do not rely solely

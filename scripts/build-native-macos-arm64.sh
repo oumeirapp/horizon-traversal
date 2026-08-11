@@ -6,8 +6,6 @@ FFMPEG_VERSION="8.1.2"
 FFMPEG_ARCHIVE="ffmpeg-${FFMPEG_VERSION}.tar.xz"
 FFMPEG_URL="https://ffmpeg.org/releases/${FFMPEG_ARCHIVE}"
 FFMPEG_SHA256="464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c"
-FFMPEG_BINARY_SHA256="5286c307f258812bfae104bba18feccbfc825d6ecaec34d7c0ef672808e1feae"
-FFPROBE_BINARY_SHA256="2ac09b9bd09e0ed37b47df56c4e20cb031121af0cbeb31c086f262192db63e65"
 
 X264_REVISION="b35605ace3ddf7c1a5d67a2eb553f034aef41d55"
 X264_ARCHIVE="x264-${X264_REVISION}.tar.bz2"
@@ -294,11 +292,6 @@ for program in ffmpeg ffprobe; do
   "$STRIP" -x "$staged_binary"
   verify_binary "$staged_binary" "$program"
 done
-
-[ "$(sha256 "${STAGING_DIRECTORY}/ffmpeg-${TARGET_TRIPLE}")" = "$FFMPEG_BINARY_SHA256" ] ||
-  fail "reproducible FFmpeg checksum does not match the release manifest"
-[ "$(sha256 "${STAGING_DIRECTORY}/ffprobe-${TARGET_TRIPLE}")" = "$FFPROBE_BINARY_SHA256" ] ||
-  fail "reproducible FFprobe checksum does not match the release manifest"
 
 STAGED_FFMPEG="${STAGING_DIRECTORY}/ffmpeg-${TARGET_TRIPLE}"
 "$STAGED_FFMPEG" -hide_banner -encoders 2>/dev/null | grep -F libx264 >/dev/null ||

@@ -33,7 +33,8 @@ executables through Tauri's native shell API.
 ## Setup
 
 The repository pins Node 24.14.0, npm 11.9.0, and Rust 1.96.0. Prepare the
-checksum-pinned native inputs on the target host before development:
+checksum-pinned native inputs and generated media tools on the target host
+before development:
 
 ```bash
 npm ci
@@ -49,14 +50,19 @@ macOS 26 / Command Line Tools 26.6 / SDK 26.5 toolchain recorded in
 [`src-tauri/native-assets.json`](src-tauri/native-assets.json). Native Windows
 x64 preparation downloads the checksum-pinned LLVM-MinGW UCRT, MSYS2 base,
 GNU Make, and NASM inputs without using rolling packages. Preparation fails if
-the target, toolchain, imports, codecs, or final hashes differ.
+the target, toolchain, imports, or codecs differ. Source, toolchain-input,
+PDFium, and distribution-file hashes remain pinned. Generated FFmpeg and
+FFprobe executables are temporarily not byte-pinned: verification checks their
+versions, configuration, codec capabilities, and dynamic dependencies, and
+reports their actual SHA-256 hashes for audit.
 
 Supported bundle targets are macOS 12 or newer on Apple Silicon and Windows
 10/11 on x64. Each bundle must be built natively on its target platform.
 
-The generated native binaries are intentionally not committed. Their source,
-target names, versions, output hashes, dependencies, and distribution files
-are validated by `npm run verify:native`.
+The generated native binaries are intentionally not committed. Their pinned
+inputs, target names, versions, configuration, codec capabilities, and
+dependencies are validated by `npm run verify:native`; their actual hashes are
+reported rather than compared with manifest output hashes.
 
 ## Checks
 

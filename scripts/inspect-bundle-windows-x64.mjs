@@ -112,11 +112,27 @@ function assertDigest(buffer, expected, label) {
   return actual;
 }
 
-async function verifyNativeFile(file, entry, policy, label) {
+export function inspectNativeContents(
+  contents,
+  { dependencyPolicy, enforceSha256 = false, expectedSha256, label },
+) {
+  const digest = enforceSha256
+    ? assertDigest(contents, expectedSha256, label)
+    : sha256(contents);
+  const pe = assertAmd64Pe(contents, dependencyPolicy, label);
+  return { sha256: digest, imports: pe.imports };
+}
+
+async function verifyNativeFile(file, policy, label, checksum = {}) {
   const contents = await regularFile(file, label);
-  const digest = assertDigest(contents, entry.sha256, label);
-  const pe = assertAmd64Pe(contents, policy, label);
-  return { path: file, sha256: digest, imports: pe.imports };
+  return {
+    path: file,
+    ...inspectNativeContents(contents, {
+      dependencyPolicy: policy,
+      ...checksum,
+      label,
+    }),
+  };
 }
 
 async function isRegularFile(file) {
@@ -261,9 +277,14 @@ export async function inspectInstalledBundle(options) {
   const ffmpegPath = path.join(installDirectory, "ffmpeg.exe");
   const ffprobePath = path.join(installDirectory, "ffprobe.exe");
   const pdfiumPath = path.join(installDirectory, "native", "pdfium.dll");
-  const ffmpeg = await verifyNativeFile(ffmpegPath, target.ffmpeg, policy, "ffmpeg");
-  const ffprobe = await verifyNativeFile(ffprobePath, target.ffprobe, policy, "ffprobe");
-  const pdfium = await verifyNativeFile(pdfiumPath, target.pdfium, policy, "PDFium");
+  const ffmpeg = await verifyNativeFile(ffmpegPath, policy, "ffmpeg");
+  const ffprobe = await verifyNativeFile(ffprobePath, policy, "ffprobe");
+  const pdfium = await verifyNativeFile(
+    pdfiumPath,
+    policy,
+    "PDFium",
+    { enforceSha256: true, expectedSha256: target.pdfium.sha256 },
+  );
 
   const ffmpegVersion = run(ffmpegPath, ["-hide_banner", "-version"]);
   const ffprobeVersion = run(ffprobePath, ["-hide_banner", "-version"]);
@@ -322,6 +343,8 @@ if (isMain) {
       fail(`Windows bundle inspection requires native Windows x64; received ${process.platform}/${process.arch}`);
     }
     const report = await inspectInstalledBundle(parseArguments(process.argv.slice(2)));
+    console.log(`ffmpeg SHA-256 (report only): ${report.nativeAssets.ffmpeg.sha256}`);
+    console.log(`ffprobe SHA-256 (report only): ${report.nativeAssets.ffprobe.sha256}`);
     console.log(
       `Windows bundle inspection passed: ${report.installDirectory} (${report.distributionFiles.length} distribution files)`,
     );

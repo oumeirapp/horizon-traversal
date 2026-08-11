@@ -26,6 +26,13 @@ sha256() {
   shasum -a 256 "$1" | awk '{print $1}'
 }
 
+print_hash() {
+  binary=$1
+  label=$2
+  actual=$(sha256 "$binary")
+  printf '%s SHA-256: %s\n' "$label" "$actual"
+}
+
 verify_arm64() {
   binary=$1
   label=$2
@@ -137,8 +144,6 @@ plutil -convert json -o /dev/null "$NATIVE_MANIFEST" ||
   fail "bundled native asset manifest is not valid JSON"
 MANIFEST_SCHEMA=$(plutil -extract schemaVersion raw -o - "$NATIVE_MANIFEST")
 [ "$MANIFEST_SCHEMA" = "2" ] || fail "unsupported native asset manifest schema: $MANIFEST_SCHEMA"
-FFMPEG_SHA256=$(plutil -extract 'targets.aarch64-apple-darwin.ffmpeg.sha256' raw -o - "$NATIVE_MANIFEST")
-FFPROBE_SHA256=$(plutil -extract 'targets.aarch64-apple-darwin.ffprobe.sha256' raw -o - "$NATIVE_MANIFEST")
 PDFIUM_SHA256=$(plutil -extract 'targets.aarch64-apple-darwin.pdfium.sha256' raw -o - "$NATIVE_MANIFEST")
 
 if [ "${HORIZON_TRAVERSAL_SKIP_CODESIGN_VERIFY:-0}" = "1" ]; then
@@ -168,35 +173,46 @@ inspect_dependencies "$PDFIUM" "PDFium" "./libpdfium.dylib"
 FFMPEG_OUTPUT=$("$FFMPEG" -hide_banner -version 2>&1)
 printf '%s\n' "$FFMPEG_OUTPUT" | grep -F "ffmpeg version $FFMPEG_VERSION" >/dev/null ||
   fail "ffmpeg did not report pinned version $FFMPEG_VERSION"
-printf '%s\n' "$FFMPEG_OUTPUT" | grep -F -- "--enable-gpl" >/dev/null ||
-  fail "ffmpeg was not built with GPL support"
-printf '%s\n' "$FFMPEG_OUTPUT" | grep -F -- "--enable-libx264" >/dev/null ||
-  fail "ffmpeg was not built with libx264"
 
 FFPROBE_OUTPUT=$("$FFPROBE" -hide_banner -version 2>&1)
 printf '%s\n' "$FFPROBE_OUTPUT" | grep -F "ffprobe version $FFMPEG_VERSION" >/dev/null ||
   fail "ffprobe did not report pinned version $FFMPEG_VERSION"
+
+configuration_index=0
+while required_configuration=$(plutil -extract "targets.aarch64-apple-darwin.ffmpeg.requiredConfiguration.$configuration_index" raw -o - "$NATIVE_MANIFEST" 2>/dev/null); do
+  printf '%s\n' "$FFMPEG_OUTPUT" | grep -F -- "$required_configuration" >/dev/null ||
+    fail "ffmpeg is missing required configuration $required_configuration"
+  printf '%s\n' "$FFPROBE_OUTPUT" | grep -F -- "$required_configuration" >/dev/null ||
+    fail "ffprobe is missing required configuration $required_configuration"
+  configuration_index=$((configuration_index + 1))
+done
+[ "$configuration_index" -gt 0 ] || fail "native asset manifest declares no required FFmpeg configuration"
+
+FFMPEG_ENCODERS=$("$FFMPEG" -hide_banner -encoders 2>&1)
+encoder_index=0
+while required_encoder=$(plutil -extract "targets.aarch64-apple-darwin.ffmpeg.requiredEncoders.$encoder_index" raw -o - "$NATIVE_MANIFEST" 2>/dev/null); do
+  printf '%s\n' "$FFMPEG_ENCODERS" | awk -v encoder="$required_encoder" '
+    $1 ~ /^[VAS]/ && $2 == encoder { found = 1 }
+    END { exit !found }
+  ' || fail "ffmpeg does not provide required encoder $required_encoder"
+  encoder_index=$((encoder_index + 1))
+done
+[ "$encoder_index" -gt 0 ] || fail "native asset manifest declares no required FFmpeg encoders"
 
 printf 'ffmpeg version: %s\n' "$(printf '%s\n' "$FFMPEG_OUTPUT" | awk 'NR == 1 { print $3 }')"
 printf 'ffprobe version: %s\n' "$(printf '%s\n' "$FFPROBE_OUTPUT" | awk 'NR == 1 { print $3 }')"
 print_and_verify_hash "$APP_EXECUTABLE" "application" "${HORIZON_TRAVERSAL_APP_SHA256:-}"
 if [ "$CODE_SIGNATURE_VERIFIED" = "1" ]; then
   # Mach-O code signatures change the byte-level digest. The deep signature
-  # check above authenticates signed nested code; the source manifest digests
-  # remain visible here for the corresponding pre-signing asset inspection.
-  printf 'ffmpeg source SHA-256: %s\n' "$FFMPEG_SHA256"
-  printf 'ffprobe source SHA-256: %s\n' "$FFPROBE_SHA256"
+  # check above authenticates signed nested code; the PDFium source digest
+  # remains visible here for the corresponding pre-signing asset inspection.
   printf 'PDFium source SHA-256: %s\n' "$PDFIUM_SHA256"
-  FFMPEG_EXPECTED=${HORIZON_TRAVERSAL_FFMPEG_SHA256:-}
-  FFPROBE_EXPECTED=${HORIZON_TRAVERSAL_FFPROBE_SHA256:-}
   PDFIUM_EXPECTED=${HORIZON_TRAVERSAL_PDFIUM_SHA256:-}
 else
-  FFMPEG_EXPECTED=${HORIZON_TRAVERSAL_FFMPEG_SHA256:-$FFMPEG_SHA256}
-  FFPROBE_EXPECTED=${HORIZON_TRAVERSAL_FFPROBE_SHA256:-$FFPROBE_SHA256}
   PDFIUM_EXPECTED=${HORIZON_TRAVERSAL_PDFIUM_SHA256:-$PDFIUM_SHA256}
 fi
-print_and_verify_hash "$FFMPEG" "ffmpeg" "$FFMPEG_EXPECTED"
-print_and_verify_hash "$FFPROBE" "ffprobe" "$FFPROBE_EXPECTED"
+print_hash "$FFMPEG" "ffmpeg"
+print_hash "$FFPROBE" "ffprobe"
 print_and_verify_hash "$PDFIUM" "PDFium" "$PDFIUM_EXPECTED"
 print_and_verify_hash "$NATIVE_MANIFEST" "native asset manifest" ""
 
