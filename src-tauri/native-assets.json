@@ -159,11 +159,35 @@
   "distributionFiles": [
     {
       "path": "src-tauri/binaries/THIRD_PARTY_NOTICES.md",
-      "sha256": "992c39516ecd27801de25be5b41c751463d21c95931649ab0f20a24ff640a8cd"
+      "sha256": "7caac212d5bb73ecae61fc501007b95025c7a95219c212ba87550d186d2feed4"
     },
     {
       "path": "src-tauri/binaries/licenses/GPL-2.0-or-later.txt",
       "sha256": "bbca5603d6bed159a81addccd6aa738cb8ae99b47ced2aeeec2a51a6bffb4f03"
+    },
+    {
+      "path": "src-tauri/binaries/licenses/windows/llvm-mingw/LICENSE.TXT",
+      "sha256": "8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee"
+    },
+    {
+      "path": "src-tauri/binaries/licenses/windows/mingw-w64/COPYING",
+      "sha256": "99a69660981156c21336fdb5661f89341b013c94e4bf9e1c7467b4745718397f"
+    },
+    {
+      "path": "src-tauri/binaries/licenses/windows/mingw-w64/COPYING.MinGW-w64-runtime.txt",
+      "sha256": "1db8da07b436c68833c0673ffee3d9fcb2526047f3820b81661865dfedc79a1f"
+    },
+    {
+      "path": "src-tauri/binaries/licenses/windows/mingw-w64/COPYING.MinGW-w64.txt",
+      "sha256": "f38e6194bd3bfa1b654f118e5acefe0aead437bbe669eee43957ccc65a7127f1"
+    },
+    {
+      "path": "src-tauri/binaries/licenses/windows/mingw-w64/COPYING.winpthreads.txt",
+      "sha256": "63263614cdd29f2f93cba85e992f041b31f9fc7b4033692f31269489a8a1b177"
+    },
+    {
+      "path": "src-tauri/binaries/licenses/windows/mingw-w64/COPYING.winstorecompat.txt",
+      "sha256": "fa7368d1f93d890c173177475d8ec7aff265a7d08f1f364d66f74d138978ce36"
     },
     {
       "path": "src-tauri/resources/licenses/pdfium/THIRD_PARTY_NOTICES.md",

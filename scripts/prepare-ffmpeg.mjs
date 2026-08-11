@@ -18,6 +18,7 @@ import { spawn, spawnSync } from "node:child_process";
 import extract from "extract-zip";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const MACOS_TARGET = "aarch64-apple-darwin";
 const WINDOWS_TARGET = "x86_64-pc-windows-msvc";
 const MANIFEST_PATH = path.join(ROOT, "src-tauri", "native-assets.json");
 
@@ -185,13 +186,46 @@ async function assertWindowsManifestPins() {
       }
     }
   }
+
+  const target = manifest.targets?.[WINDOWS_TARGET];
+  if (!target) {
+    fail(`native-assets.json has no output pins for ${WINDOWS_TARGET}`);
+  }
+  return target;
+}
+
+async function preparedBinariesMatch(target, targetTriple) {
+  for (const [program, asset] of [
+    ["FFmpeg", target.ffmpeg],
+    ["FFprobe", target.ffprobe],
+  ]) {
+    if (!asset || !/^[a-f0-9]{64}$/.test(asset.sha256 ?? "")) {
+      fail(`native-assets.json has no valid ${program} output hash for ${targetTriple}`);
+    }
+    const binary = path.join(ROOT, ...asset.path.split("/"));
+    try {
+      if (!(await stat(binary)).isFile() || (await sha256(binary)) !== asset.sha256) {
+        return false;
+      }
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return false;
+      }
+      throw error;
+    }
+  }
+  return true;
 }
 
 async function prepareWindows() {
   if (process.arch !== "x64") {
     fail(`Windows media preparation requires x64; received ${process.arch}`);
   }
-  await assertWindowsManifestPins();
+  const target = await assertWindowsManifestPins();
+  if (await preparedBinariesMatch(target, WINDOWS_TARGET)) {
+    console.log(`FFmpeg and FFprobe are already prepared for ${WINDOWS_TARGET}.`);
+    return;
+  }
 
   const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
   if (!systemRoot) {
@@ -340,6 +374,15 @@ async function prepareWindows() {
 
 async function main() {
   if (process.platform === "darwin" && process.arch === "arm64") {
+    const manifest = JSON.parse(await readFile(MANIFEST_PATH, "utf8"));
+    const target = manifest.targets?.[MACOS_TARGET];
+    if (!target) {
+      fail(`native-assets.json has no output pins for ${MACOS_TARGET}`);
+    }
+    if (await preparedBinariesMatch(target, MACOS_TARGET)) {
+      console.log(`FFmpeg and FFprobe are already prepared for ${MACOS_TARGET}.`);
+      return;
+    }
     await run("/bin/sh", [
       path.join(ROOT, "scripts", "build-native-macos-arm64.sh"),
     ]);

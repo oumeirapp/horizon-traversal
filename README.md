@@ -91,7 +91,7 @@ durably available beside the release:
 
 ```bash
 npm run prepare:source-offer
-(cd dist/native-source-offer && shasum -a 256 -c SHA256SUMS)
+(cd src-tauri/target/release-artifacts/native-source-offer && shasum -a 256 -c SHA256SUMS)
 ```
 
 An expiring CI artifact is not a durable source offer. PDFium notices and the

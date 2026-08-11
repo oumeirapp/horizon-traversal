@@ -241,7 +241,7 @@ async function verifyTauriConfiguration(hostTriple, manifestTarget) {
   const requiredResources = [
     "native-assets.json",
     "binaries/THIRD_PARTY_NOTICES.md",
-    "binaries/licenses/GPL-2.0-or-later.txt",
+    "binaries/licenses",
   ];
   for (const resource of requiredResources) {
     if (!configuredResources.includes(resource)) {

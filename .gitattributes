@@ -1,1 +1,2 @@
 src-tauri/resources/licenses/pdfium/wheel/** -text whitespace=cr-at-eol,-blank-at-eof
+src-tauri/binaries/licenses/windows/** -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof

@@ -18,7 +18,6 @@ require_file() {
 SCRIPT_DIRECTORY=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPOSITORY=$(CDPATH= cd -- "$SCRIPT_DIRECTORY/../.." && pwd)
 TARGET="aarch64-apple-darwin"
-APP_BUNDLE="$REPOSITORY/src-tauri/target/$TARGET/release/bundle/macos/Horizon Traversal.app"
 FFMPEG="$REPOSITORY/src-tauri/binaries/ffmpeg-$TARGET"
 FFPROBE="$REPOSITORY/src-tauri/binaries/ffprobe-$TARGET"
 PDF_FIXTURE="$REPOSITORY/src-tauri/tests/fixtures/one-page.pdf"
@@ -37,6 +36,8 @@ done
 
 SMOKE_DIRECTORY=$(mktemp -d "${TMPDIR:-/tmp}/horizon-traversal-package-smoke.XXXXXX")
 SMOKE_DIRECTORY=$(CDPATH= cd -- "$SMOKE_DIRECTORY" && pwd -P)
+SMOKE_CARGO_TARGET_DIRECTORY="$SMOKE_DIRECTORY/cargo-target"
+APP_BUNDLE="$SMOKE_CARGO_TARGET_DIRECTORY/$TARGET/release/bundle/macos/Horizon Traversal.app"
 SMOKE_SUCCEEDED=0
 cleanup() {
   if [ "$SMOKE_SUCCEEDED" != "1" ] || [ "${HORIZON_TRAVERSAL_KEEP_SMOKE_WORKSPACE:-0}" = "1" ]; then
@@ -83,7 +84,7 @@ plutil -convert json "$REQUEST_PATH"
 
 cd "$REPOSITORY"
 npm run verify:native
-npm run tauri -- build \
+CARGO_TARGET_DIR="$SMOKE_CARGO_TARGET_DIRECTORY" npm run tauri -- build \
   --target "$TARGET" \
   --features packaged-smoke \
   --bundles app \
