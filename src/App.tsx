@@ -539,9 +539,7 @@ function App() {
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
   const [openingOutput, setOpeningOutput] = useState(false);
-  const [logsExpanded, setLogsExpanded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const logExpandButtonRef = useRef<HTMLButtonElement>(null);
   const runGenerationRef = useRef(0);
   const { enqueue: enqueueEvent, flush: flushEvents } = useBatchedEvents(
     dispatch,
@@ -598,17 +596,6 @@ function App() {
   );
   const activeStages = selectedStages(processingOptions);
 
-  useEffect(() => {
-    if (!logsExpanded) return;
-    function closeExpandedLog(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
-      setLogsExpanded(false);
-      queueMicrotask(() => logExpandButtonRef.current?.focus());
-    }
-    window.addEventListener("keydown", closeExpandedLog);
-    return () => window.removeEventListener("keydown", closeExpandedLog);
-  }, [logsExpanded]);
-
   async function chooseFolder(kind: "input" | "output") {
     setDialogError(null);
     try {
@@ -631,7 +618,6 @@ function App() {
     event.preventDefault();
     if (!canStart) return;
     setOpenError(null);
-    setLogsExpanded(false);
     const generation = runGenerationRef.current + 1;
     runGenerationRef.current = generation;
     dispatch({ type: "start", startedAt: performance.now() });
@@ -674,7 +660,6 @@ function App() {
     runGenerationRef.current += 1;
     dispatch({ type: "reset" });
     setOpenError(null);
-    setLogsExpanded(false);
     queueMicrotask(() => inputRef.current?.focus());
   }
 
@@ -685,7 +670,6 @@ function App() {
     setProcessingOptions((current) => ({ ...current, [option]: enabled }));
   }
 
-  const toggleLogs = useCallback(() => setLogsExpanded((expanded) => !expanded), []);
   const statusLabel =
     run.phase === "running"
       ? "Transfer in progress"
@@ -714,7 +698,7 @@ function App() {
             : statusLabel;
 
   return (
-    <main className={`app-shell${logsExpanded ? " app-shell--logs-expanded" : ""}`}>
+    <main className="app-shell">
       <header className="app-header">
         <div className="brand">
           <span className="brand__mark" aria-hidden="true">
@@ -968,12 +952,7 @@ function App() {
         />
         {openError === null ? null : <p className="form-alert output-alert" role="alert">{openError}</p>}
 
-        <ActivityPanel
-          logs={run.logs}
-          isExpanded={logsExpanded}
-          onToggleExpanded={toggleLogs}
-          toggleButtonRef={logExpandButtonRef}
-        />
+        <ActivityPanel logs={run.logs} />
       </div>
     </main>
   );

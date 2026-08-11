@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
-  type RefObject,
 } from "react";
 import type { RunLogEntry } from "../lib/run-state";
 
@@ -13,9 +12,6 @@ type LogTab = "activity" | "warning" | "error";
 
 interface ActivityPanelProps {
   logs: RunLogEntry[];
-  isExpanded: boolean;
-  onToggleExpanded: () => void;
-  toggleButtonRef: RefObject<HTMLButtonElement | null>;
 }
 
 const LOG_RENDER_LIMIT = 750;
@@ -48,12 +44,7 @@ function LogLevelMark({ level }: { level: RunLogEntry["level"] }) {
   );
 }
 
-function ActivityPanelComponent({
-  logs,
-  isExpanded,
-  onToggleExpanded,
-  toggleButtonRef,
-}: ActivityPanelProps) {
+function ActivityPanelComponent({ logs }: ActivityPanelProps) {
   const [tab, setTab] = useState<LogTab>("activity");
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase());
@@ -118,10 +109,7 @@ function ActivityPanelComponent({
   }
 
   return (
-    <section
-      className={`activity-panel${isExpanded ? " activity-panel--expanded" : ""}`}
-      aria-labelledby="activity-heading"
-    >
+    <section className="activity-panel" aria-labelledby="activity-heading">
       <div className="activity-panel__header">
         <div>
           <p className="section-kicker">Run record</p>
@@ -141,22 +129,6 @@ function ActivityPanelComponent({
               placeholder="Search this run"
             />
           </label>
-          <button
-            ref={toggleButtonRef}
-            type="button"
-            className="icon-button"
-            onClick={onToggleExpanded}
-            aria-label={isExpanded ? "Collapse activity log" : "Expand activity log"}
-            aria-pressed={isExpanded}
-          >
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-              {isExpanded ? (
-                <path d="M9 4v5H4M15 20v-5h5M4 9l6-6M20 15l-6 6" />
-              ) : (
-                <path d="M9 4H4v5M15 20h5v-5M4 4l6 6M20 20l-6-6" />
-              )}
-            </svg>
-          </button>
         </div>
       </div>
 

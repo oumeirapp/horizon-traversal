@@ -638,7 +638,6 @@ input::placeholder {
 }
 
 .button svg,
-.icon-button svg,
 .log-search svg,
 .run-result__mark svg,
 .asset-route__node svg,
@@ -1063,23 +1062,6 @@ input::placeholder {
   font-size: 0.78rem;
 }
 
-.icon-button {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  color: var(--muted);
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
-  background: rgb(255 255 255 / 2%);
-}
-
-.icon-button:hover {
-  color: var(--teal);
-  border-color: rgb(67 216 189 / 35%);
-}
-
 .activity-tabs {
   display: flex;
   align-items: flex-end;
@@ -1249,25 +1231,6 @@ input::placeholder {
 .log-level--error { color: var(--red); }
 .log-entry--warning p { color: #d8bd8b; }
 .log-entry--error p { color: #e9a3a2; }
-
-.app-shell--logs-expanded .setup-card,
-.app-shell--logs-expanded .run-card,
-.app-shell--logs-expanded .run-result,
-.app-shell--logs-expanded .output-alert {
-  display: none;
-}
-
-.app-shell--logs-expanded .workspace {
-  display: block;
-  max-width: none;
-  padding-top: 14px;
-  padding-bottom: 14px;
-}
-
-.activity-panel--expanded {
-  grid-template-rows: auto auto minmax(0, 1fr);
-  height: calc(100vh - 100px);
-}
 
 @media (max-width: 900px) {
   .workspace {

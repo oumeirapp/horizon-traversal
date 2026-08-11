@@ -607,21 +607,14 @@ describe("Horizon Traversal workbench", () => {
     expect(screen.getByText("Write report: pending")).toBeInTheDocument();
   });
 
-  it("supports arrow-key log tabs and restores focus after Escape", async () => {
+  it("supports arrow-key log tabs without an expanded activity view", () => {
     render(<App />);
     const activityTab = screen.getByRole("tab", { name: /Activity/ });
     fireEvent.keyDown(activityTab, { key: "ArrowRight" });
     expect(screen.getByRole("tab", { name: /Warnings/ })).toHaveFocus();
-
-    const expand = screen.getByRole("button", { name: "Expand activity log" });
-    fireEvent.click(expand);
-    const collapse = screen.getByRole("button", { name: "Collapse activity log" });
-    expect(collapse).toHaveAttribute("aria-pressed", "true");
-    fireEvent.keyDown(window, { key: "Escape" });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(screen.getByRole("button", { name: "Expand activity log" })).toHaveFocus();
+    expect(
+      screen.queryByRole("button", { name: /activity log/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows backend validation guidance beside the related field", async () => {
