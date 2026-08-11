@@ -17,8 +17,8 @@ jobs:
     name: Frontend tests and build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -30,10 +30,10 @@ jobs:
     name: Rust and native assets
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Assert Apple Silicon runner
         run: test "$(uname -m)" = arm64
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -43,7 +43,8 @@ jobs:
           expected_clt=$(node -p "require('./src-tauri/native-assets.json').targets['aarch64-apple-darwin'].mediaBuild.toolchainPackageVersion")
           expected_sdk=$(node -p "require('./src-tauri/native-assets.json').targets['aarch64-apple-darwin'].mediaBuild.sdkVersion")
           test "$(xcrun clang --version | head -n 1)" = "$expected_compiler"
-          test "$(pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | awk -F ': ' '$1 == \"version\" { print $2; exit }')" = "$expected_clt"
+          actual_clt=$(pkgutil --pkg-info-plist com.apple.pkg.CLTools_Executables | plutil -extract pkg-version raw -o - -)
+          test "$actual_clt" = "$expected_clt"
           test "$(xcrun --sdk macosx --show-sdk-version)" = "$expected_sdk"
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -53,7 +54,7 @@ jobs:
       - run: npm ci
       - name: Restore pinned native inputs
         id: native-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             src-tauri/binaries/ffmpeg-aarch64-apple-darwin
@@ -78,10 +79,10 @@ jobs:
     needs: [frontend, macos-arm64-quality]
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Assert Apple Silicon runner
         run: test "$(uname -m)" = arm64
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -91,7 +92,8 @@ jobs:
           expected_clt=$(node -p "require('./src-tauri/native-assets.json').targets['aarch64-apple-darwin'].mediaBuild.toolchainPackageVersion")
           expected_sdk=$(node -p "require('./src-tauri/native-assets.json').targets['aarch64-apple-darwin'].mediaBuild.sdkVersion")
           test "$(xcrun clang --version | head -n 1)" = "$expected_compiler"
-          test "$(pkgutil --pkg-info=com.apple.pkg.CLTools_Executables | awk -F ': ' '$1 == \"version\" { print $2; exit }')" = "$expected_clt"
+          actual_clt=$(pkgutil --pkg-info-plist com.apple.pkg.CLTools_Executables | plutil -extract pkg-version raw -o - -)
+          test "$actual_clt" = "$expected_clt"
           test "$(xcrun --sdk macosx --show-sdk-version)" = "$expected_sdk"
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -99,7 +101,7 @@ jobs:
           target: aarch64-apple-darwin
       - run: npm ci
       - name: Restore pinned native inputs
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             src-tauri/binaries/ffmpeg-aarch64-apple-darwin
@@ -124,7 +126,7 @@ jobs:
           ditto -c -k --keepParent \
             "dist/native-source-offer" \
             "dist/Horizon-Traversal-native-source.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: horizon-traversal-packaged-smoke-not-for-release
           path: |
