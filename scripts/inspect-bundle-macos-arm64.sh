@@ -136,7 +136,7 @@ require_file "$NATIVE_MANIFEST"
 plutil -convert json -o /dev/null "$NATIVE_MANIFEST" ||
   fail "bundled native asset manifest is not valid JSON"
 MANIFEST_SCHEMA=$(plutil -extract schemaVersion raw -o - "$NATIVE_MANIFEST")
-[ "$MANIFEST_SCHEMA" = "1" ] || fail "unsupported native asset manifest schema: $MANIFEST_SCHEMA"
+[ "$MANIFEST_SCHEMA" = "2" ] || fail "unsupported native asset manifest schema: $MANIFEST_SCHEMA"
 FFMPEG_SHA256=$(plutil -extract 'targets.aarch64-apple-darwin.ffmpeg.sha256' raw -o - "$NATIVE_MANIFEST")
 FFPROBE_SHA256=$(plutil -extract 'targets.aarch64-apple-darwin.ffprobe.sha256' raw -o - "$NATIVE_MANIFEST")
 PDFIUM_SHA256=$(plutil -extract 'targets.aarch64-apple-darwin.pdfium.sha256' raw -o - "$NATIVE_MANIFEST")

@@ -142,4 +142,23 @@ mod tests {
             "release candidates must not depend on the repository"
         );
     }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packaged_candidates_use_the_windows_native_directory() {
+        let install_directory = Path::new(r"C:\Program Files\Horizon Traversal");
+        let executable = install_directory.join("horizon-traversal.exe");
+        let expected = install_directory.join("native").join("pdfium.dll");
+
+        let with_resource_directory = packaged_pdfium_candidates(
+            Some(install_directory),
+            &executable,
+            OsStr::new("pdfium.dll"),
+        );
+        assert_eq!(with_resource_directory, vec![expected.clone()]);
+
+        let from_executable =
+            packaged_pdfium_candidates(None, &executable, OsStr::new("pdfium.dll"));
+        assert_eq!(from_executable, vec![expected]);
+    }
 }

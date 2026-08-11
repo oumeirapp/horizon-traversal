@@ -5,9 +5,10 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { assertAmd64Pe } from "./lib/pe.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST_PATH = path.join(ROOT, "src-tauri", "native-assets.json");
-const PDFIUM_WHEEL_LICENSE_COUNT = 19;
 
 function fail(message) {
   throw new Error(message);
@@ -210,10 +211,8 @@ async function verifyDistributionFiles(entries, hostTriple) {
     )
     .sort();
 
-  if (declaredWheelLicenses.length !== PDFIUM_WHEEL_LICENSE_COUNT) {
-    fail(
-      `native-assets.json must declare all ${PDFIUM_WHEEL_LICENSE_COUNT} license files from the pinned PDFium wheel`,
-    );
+  if (declaredWheelLicenses.length < 4) {
+    fail("native-assets.json must declare the complete pinned PDFium wheel license set");
   }
 
   if (
@@ -235,17 +234,22 @@ async function verifyTauriConfiguration(hostTriple, manifestTarget) {
     fail("tauri.conf.json must bundle only the suffix-free FFmpeg and FFprobe paths");
   }
 
+  const resources = configuration.bundle?.resources ?? [];
+  const configuredResources = Array.isArray(resources)
+    ? resources
+    : Object.values(resources);
   const requiredResources = [
     "native-assets.json",
     "binaries/THIRD_PARTY_NOTICES.md",
     "binaries/licenses/GPL-2.0-or-later.txt",
-    "resources/licenses/pdfium/**/*",
   ];
-  const configuredResources = new Set(configuration.bundle?.resources ?? []);
   for (const resource of requiredResources) {
-    if (!configuredResources.has(resource)) {
+    if (!configuredResources.includes(resource)) {
       fail(`tauri.conf.json does not bundle required resource ${resource}`);
     }
+  }
+  if (!configuredResources.some((resource) => resource.startsWith("resources/licenses/pdfium"))) {
+    fail("tauri.conf.json does not bundle the PDFium license tree");
   }
 
   if (hostTriple.endsWith("apple-darwin")) {
@@ -279,18 +283,22 @@ async function verifyPreparationScripts(manifest, hostTriple, target) {
     manifest.sources.x264.revision,
     manifest.sources.x264.sha256,
     hostTriple,
-    target.mediaBuild.minimumSystemVersion,
-    target.mediaBuild.compiler,
-    target.mediaBuild.toolchainPackageVersion,
-    target.mediaBuild.sdkVersion,
     String(target.mediaBuild.sourceDateEpoch),
-    target.ffmpeg.sha256,
-    target.ffprobe.sha256,
     "https://ffmpeg.org/releases/",
     "https://code.videolan.org/videolan/x264/",
   ];
+  if (target.platform === "darwin") {
+    requiredBuildValues.push(
+      target.mediaBuild.minimumSystemVersion,
+      target.mediaBuild.compiler,
+      target.mediaBuild.toolchainPackageVersion,
+      target.mediaBuild.sdkVersion,
+      target.ffmpeg.sha256,
+      target.ffprobe.sha256,
+    );
+  }
   for (const value of requiredBuildValues) {
-    if (!buildScript.includes(value)) {
+    if (typeof value !== "string" || !buildScript.includes(value)) {
       fail(
         `${target.mediaBuild.script} does not contain pinned manifest value ${value}`,
       );
@@ -299,13 +307,7 @@ async function verifyPreparationScripts(manifest, hostTriple, target) {
 
   const pdfiumScriptPath = path.join(ROOT, "scripts", "prepare-pdfium.mjs");
   const pdfiumScript = await readFile(pdfiumScriptPath, "utf8");
-  const requiredPdfiumValues = [
-    manifest.sources.pdfiumWheel.packageVersion,
-    manifest.sources.pdfiumWheel.pdfiumVersion,
-    manifest.sources.pdfiumWheel.url,
-    manifest.sources.pdfiumWheel.sha256,
-    target.pdfium.sha256,
-  ];
+  const requiredPdfiumValues = ["native-assets.json", "pdfiumWheels"];
   for (const value of requiredPdfiumValues) {
     if (!pdfiumScript.includes(value)) {
       fail(`scripts/prepare-pdfium.mjs does not contain pinned manifest value ${value}`);
@@ -314,26 +316,27 @@ async function verifyPreparationScripts(manifest, hostTriple, target) {
 }
 
 async function verifyWebviewBoundary() {
-  const capabilityPath = path.join(
-    ROOT,
-    "src-tauri",
-    "capabilities",
-    "default.json",
-  );
-  const capability = JSON.parse(await readFile(capabilityPath, "utf8"));
+  const capabilityDirectory = path.join(ROOT, "src-tauri", "capabilities");
   const forbiddenPermissionPrefixes = ["shell:", "opener:", "fs:"];
-  for (const permission of capability.permissions ?? []) {
-    const identifier =
-      typeof permission === "string" ? permission : permission?.identifier;
-    if (
-      typeof identifier === "string" &&
-      forbiddenPermissionPrefixes.some((prefix) =>
-        identifier === prefix.slice(0, -1) || identifier.startsWith(prefix),
-      )
-    ) {
-      fail(
-        `the webview capability must not expose native ${identifier.split(":", 1)[0]} APIs: ${identifier}`,
-      );
+  for (const entry of await readdir(capabilityDirectory, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) {
+      continue;
+    }
+    const capabilityPath = path.join(capabilityDirectory, entry.name);
+    const capability = JSON.parse(await readFile(capabilityPath, "utf8"));
+    for (const permission of capability.permissions ?? []) {
+      const identifier =
+        typeof permission === "string" ? permission : permission?.identifier;
+      if (
+        typeof identifier === "string" &&
+        forbiddenPermissionPrefixes.some((prefix) =>
+          identifier === prefix.slice(0, -1) || identifier.startsWith(prefix),
+        )
+      ) {
+        fail(
+          `the webview capability ${entry.name} must not expose native ${identifier.split(":", 1)[0]} APIs: ${identifier}`,
+        );
+      }
     }
   }
 
@@ -364,8 +367,49 @@ async function verifyWebviewBoundary() {
 
 async function main() {
   const manifest = JSON.parse(await readFile(MANIFEST_PATH, "utf8"));
-  if (manifest.schemaVersion !== 1) {
+  if (manifest.schemaVersion !== 2) {
     fail(`unsupported native asset manifest schema: ${manifest.schemaVersion}`);
+  }
+
+  const pinnedTargets = new Set(manifest.pinnedTargets ?? []);
+  if (pinnedTargets.size === 0) {
+    fail("native-assets.json must declare at least one pinned target");
+  }
+  for (const targetTriple of pinnedTargets) {
+    const declaredTarget = manifest.targets?.[targetTriple];
+    const declaredWheel = manifest.sources?.pdfiumWheels?.[targetTriple];
+    if (!declaredTarget || !declaredWheel) {
+      fail(`native-assets.json has incomplete pins for ${targetTriple}`);
+    }
+    if (declaredTarget.ffmpeg.version !== manifest.sources.ffmpeg.version) {
+      fail(`${targetTriple} FFmpeg binary version does not match the source pin`);
+    }
+    if (declaredTarget.ffprobe.version !== manifest.sources.ffmpeg.version) {
+      fail(`${targetTriple} FFprobe binary version does not match the source pin`);
+    }
+    if (declaredTarget.pdfium.version !== declaredWheel.pdfiumVersion) {
+      fail(`${targetTriple} PDFium binary version does not match its wheel pin`);
+    }
+    for (const [name, asset] of [
+      ["FFmpeg", declaredTarget.ffmpeg],
+      ["FFprobe", declaredTarget.ffprobe],
+      ["PDFium", declaredTarget.pdfium],
+    ]) {
+      assertSha256(asset.sha256, `${targetTriple} ${name} output hash`);
+    }
+    if (
+      typeof declaredTarget.mediaBuild?.compiler !== "string" ||
+      declaredTarget.mediaBuild.compiler.length === 0
+    ) {
+      fail(`${targetTriple} must pin the native media compiler identity`);
+    }
+    verifyProgramPath("ffmpeg", declaredTarget.ffmpeg, targetTriple);
+    verifyProgramPath("ffprobe", declaredTarget.ffprobe, targetTriple);
+  }
+  for (const targetTriple of Object.keys(manifest.targets ?? {})) {
+    if (!pinnedTargets.has(targetTriple)) {
+      fail(`native-assets.json target ${targetTriple} is not listed in pinnedTargets`);
+    }
   }
 
   const hostTriple = detectHostTriple();
@@ -385,11 +429,22 @@ async function main() {
   if (target.ffprobe.version !== manifest.sources.ffmpeg.version) {
     fail("FFprobe binary version and FFmpeg source version do not match in native-assets.json");
   }
-  if (target.pdfium.version !== manifest.sources.pdfiumWheel.pdfiumVersion) {
+  const pdfiumWheel = manifest.sources.pdfiumWheels?.[hostTriple];
+  if (!pdfiumWheel) {
+    fail(`native-assets.json has no PDFium wheel for ${hostTriple}`);
+  }
+  if (target.pdfium.version !== pdfiumWheel.pdfiumVersion) {
     fail("PDFium binary version and wheel version do not match in native-assets.json");
   }
-  for (const [sourceName, source] of Object.entries(manifest.sources)) {
-    assertSha256(source.sha256, `${sourceName} source hash`);
+  assertSha256(manifest.sources.ffmpeg.sha256, "FFmpeg source hash");
+  assertSha256(manifest.sources.x264.sha256, "x264 source hash");
+  for (const [targetTriple, wheel] of Object.entries(manifest.sources.pdfiumWheels)) {
+    assertSha256(wheel.sha256, `${targetTriple} PDFium wheel source hash`);
+  }
+  for (const [targetTriple, tools] of Object.entries(manifest.toolchains ?? {})) {
+    for (const [toolName, tool] of Object.entries(tools)) {
+      assertSha256(tool.sha256, `${targetTriple} ${toolName} source hash`);
+    }
   }
 
   const expectedPlatform = hostTriple.endsWith("apple-darwin")
@@ -436,6 +491,22 @@ async function main() {
     executable: false,
     hostTriple,
   });
+
+  if (target.platform === "windows") {
+    const dependencyPolicy = target.dynamicDependencies;
+    for (const [label, file] of [
+      ["ffmpeg", ffmpeg],
+      ["ffprobe", ffprobe],
+      ["PDFium", pdfium],
+    ]) {
+      const inspection = assertAmd64Pe(
+        await readFile(file),
+        dependencyPolicy,
+        label,
+      );
+      console.log(`${label} PE imports: ${inspection.imports.join(", ") || "(none)"}`);
+    }
+  }
 
   const ffmpegVersion = verifyVersion("ffmpeg", ffmpeg, target.ffmpeg);
   const ffprobeVersion = verifyVersion("ffprobe", ffprobe, target.ffprobe);

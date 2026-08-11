@@ -10,12 +10,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "prepare:ffmpeg": "./scripts/build-native-macos-arm64.sh",
+    "prepare:ffmpeg": "node scripts/prepare-ffmpeg.mjs",
     "prepare:pdfium": "node scripts/prepare-pdfium.mjs",
     "prepare:source-offer": "node scripts/prepare-native-source-offer.mjs",
     "verify:native": "node scripts/verify-native-assets.mjs",
     "smoke:package": "sh scripts/smoke/build-and-run-macos-arm64.sh",
-    "test": "vitest run",
+    "test": "vitest run && npm run test:native-scripts",
+    "test:native-scripts": "node --test scripts/lib/pe.test.mjs",
     "test:watch": "vitest",
     "preview": "vite preview",
     "tauri": "tauri"

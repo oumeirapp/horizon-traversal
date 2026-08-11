@@ -18,6 +18,7 @@ output/
 
 # Prepared native build inputs
 src-tauri/resources/native/libpdfium.dylib
+src-tauri/resources/native/pdfium.dll
 src-tauri/binaries/ffmpeg-*
 src-tauri/binaries/ffprobe-*
 
