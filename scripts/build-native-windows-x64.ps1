@@ -466,7 +466,10 @@ tar -xJf "$HORIZON_DOWNLOAD_ROOT/ffmpeg-8.1.2.tar.xz" -C "$HORIZON_SOURCE_ROOT"
 tar -xjf "$HORIZON_DOWNLOAD_ROOT/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2" -C "$HORIZON_SOURCE_ROOT"
 
 REPRODUCIBLE_CFLAGS="-O2 -fno-ident -ffunction-sections -fdata-sections -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00"
-REPRODUCIBLE_LDFLAGS="-static -Wl,--gc-sections -Wl,--no-insert-timestamp -Wl,--major-os-version,10 -Wl,--minor-os-version,0 -Wl,--major-subsystem-version,10 -Wl,--minor-subsystem-version,0"
+# Keep the Windows 10 OS header target, but retain LLVM-MinGW's compatible PE
+# subsystem default. Forcing subsystem 10.0 makes the Windows loader reject
+# this MinGW startup image with STATUS_INVALID_IMAGE_FORMAT (0xC000007B).
+REPRODUCIBLE_LDFLAGS="-static -Wl,--gc-sections -Wl,--no-insert-timestamp -Wl,--major-os-version,10 -Wl,--minor-os-version,0"
 export CC CXX AR RANLIB STRIP NM STRINGS AS
 export ARFLAGS=rcD
 

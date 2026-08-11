@@ -66,6 +66,16 @@ test("Windows builder performs exactly one clean build with strict validation", 
   assert.match(windowsBuilder, /does not contain the AAC encoder/);
   assert.match(windowsBuilder, /--disable-stripping/);
   assert.ok(windowsConfiguration.includes("--disable-stripping"));
+  assert.match(
+    windowsBuilder,
+    /-D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00/,
+  );
+  assert.match(windowsBuilder, /--major-os-version,10/);
+  assert.match(windowsBuilder, /--minor-os-version,0/);
+  assert.doesNotMatch(
+    windowsBuilder,
+    /--(?:major|minor)-subsystem-version/,
+  );
   assert.doesNotMatch(windowsBuilder, /\$STRIP" --strip-all/);
   assert.doesNotMatch(windowsBuilder, /\bGet-FileHash\b/);
   assert.match(windowsBuilder, /\[System\.Security\.Cryptography\.SHA256\]::Create\(\)/);
