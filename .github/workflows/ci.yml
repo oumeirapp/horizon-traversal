@@ -205,7 +205,7 @@ jobs:
 
   macos-arm64-package:
     name: macOS arm64 ad-hoc package evidence (non-release)
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: [frontend, macos-arm64-quality]
     runs-on: macos-26
     steps:
@@ -360,7 +360,7 @@ jobs:
 
   windows-x64-package:
     name: Windows x64 unsigned package evidence (non-release)
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: [frontend, windows-x64-quality]
     runs-on: windows-2025
     steps:

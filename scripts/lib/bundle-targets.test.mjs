@@ -191,3 +191,22 @@ test("Tauri platform merge retains shared resources and adds Windows PDFium", as
   });
   assert.equal(merged.bundle.windows.nsis.installMode, "currentUser");
 });
+
+test("CI packages downloadable non-release apps on pushes and manual runs", async () => {
+  const workflow = await readFile(
+    path.join(ROOT, ".github", "workflows", "ci.yml"),
+    "utf8",
+  );
+  const packageCondition =
+    "    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'";
+
+  assert.equal(workflow.split(packageCondition).length - 1, 2);
+  assert.match(
+    workflow,
+    /name: horizon-traversal-macos-arm64-adhoc-unnotarized-non-release/,
+  );
+  assert.match(
+    workflow,
+    /name: horizon-traversal-windows-x64-unsigned-non-release/,
+  );
+});

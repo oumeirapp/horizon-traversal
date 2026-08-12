@@ -107,8 +107,11 @@ Production publishing remains a later step and requires Developer ID signing,
 the hardened runtime and notarization on macOS, Authenticode on Windows, and
 the verified corresponding-source archive in a durable release location.
 
-The manual GitHub Actions package jobs create explicitly non-release evidence.
-They do not publish a GitHub release.
+After the quality gates pass, GitHub Actions packages both applications on
+pushes and manual workflow runs. Download the seven-day, explicitly non-release
+macOS and Windows artifacts from the workflow run's **Artifacts** section.
+Pull-request runs remain quality-only, and the jobs do not publish a GitHub
+release.
 
 ## Native licensing
 
