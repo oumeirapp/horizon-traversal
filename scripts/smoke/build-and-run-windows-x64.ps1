@@ -14,6 +14,33 @@ function Require-File {
   }
 }
 
+function Write-OversizedPng {
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)][string]$Destination
+  )
+
+  $SourceImage = [System.Drawing.Image]::FromFile($Source)
+  try {
+    $Bitmap = New-Object System.Drawing.Bitmap -ArgumentList 2400, 1500
+    try {
+      $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
+      try {
+        $Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+        $Graphics.DrawImage($SourceImage, 0, 0, 2400, 1500)
+      } finally {
+        $Graphics.Dispose()
+      }
+      $Bitmap.Save($Destination, [System.Drawing.Imaging.ImageFormat]::Png)
+    } finally {
+      $Bitmap.Dispose()
+    }
+  } finally {
+    $SourceImage.Dispose()
+  }
+  Require-File -Path $Destination -Label "oversized PNG fixture"
+}
+
 function Invoke-Checked {
   param(
     [Parameter(Mandatory = $true)][string]$Program,
@@ -164,10 +191,20 @@ function Read-ProbeStream {
 }
 
 function Assert-ImageBounds {
-  param([string]$Ffprobe, [string]$File)
-  $Stream = Read-ProbeStream -Ffprobe $Ffprobe -File $File -Selector "v:0" -Entries "stream=width,height"
-  if ($Stream.width -gt 1920 -or $Stream.height -gt 1080) {
-    Fail "image exceeds 1920x1080 after processing: $File ($($Stream.width)x$($Stream.height))"
+  param([Parameter(Mandatory = $true)][string]$File)
+
+  $Image = [System.Drawing.Image]::FromFile($File)
+  try {
+    $Width = $Image.Width
+    $Height = $Image.Height
+  } finally {
+    $Image.Dispose()
+  }
+  if ($Width -le 0 -or $Height -le 0) {
+    Fail "image has invalid dimensions after processing: $File (${Width}x${Height})"
+  }
+  if ($Width -gt 1920 -or $Height -gt 1080) {
+    Fail "image exceeds 1920x1080 after processing: $File (${Width}x${Height})"
   }
 }
 
@@ -200,6 +237,11 @@ if (-not [Environment]::Is64BitOperatingSystem -or -not [Environment]::Is64BitPr
 }
 if ($PSVersionTable.PSEdition -ne "Desktop" -or $PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -lt 1) {
   Fail "packaged Windows smoke requires Windows PowerShell 5.1"
+}
+try {
+  Add-Type -AssemblyName System.Drawing
+} catch {
+  Fail "packaged Windows smoke requires System.Drawing: $($_.Exception.Message)"
 }
 
 $ScriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -332,13 +374,7 @@ try {
 
   New-Item -ItemType Directory -Path $SourceDirectory | Out-Null
   Copy-Item -LiteralPath $PdfFixture -Destination (Join-Path $SourceDirectory "brief.pdf")
-  Invoke-Checked -Program $SourceFfmpeg -Arguments @(
-    "-hide_banner", "-loglevel", "error", "-y",
-    "-i", $ImageFixture,
-    "-vf", "scale=2400:1500:flags=neighbor",
-    "-frames:v", "1",
-    (Join-Path $SourceDirectory "visual.png")
-  ) -Description "oversized image fixture generation"
+  Write-OversizedPng -Source $ImageFixture -Destination (Join-Path $SourceDirectory "visual.png")
   Invoke-Checked -Program $SourceFfmpeg -Arguments @(
     "-hide_banner", "-loglevel", "error", "-y",
     "-f", "lavfi", "-i", "color=c=0x0c756d:s=1080x1920:r=10",
@@ -389,8 +425,8 @@ try {
   }
 
   $InstalledFfprobe = Join-Path $InstallDirectory "ffprobe.exe"
-  Assert-ImageBounds -Ffprobe $InstalledFfprobe -File $PdfImage
-  Assert-ImageBounds -Ffprobe $InstalledFfprobe -File $VisualImage
+  Assert-ImageBounds -File $PdfImage
+  Assert-ImageBounds -File $VisualImage
   $VideoStream = Read-ProbeStream -Ffprobe $InstalledFfprobe -File $OutputVideo -Selector "v:0" -Entries "stream=codec_name,width,height,pix_fmt"
   if ($VideoStream.codec_name -ne "h264" -or $VideoStream.width -ne 720 -or $VideoStream.height -ne 1280 -or $VideoStream.pix_fmt -ne "yuv420p") {
     Fail "unexpected processed video stream: $($VideoStream.codec_name) $($VideoStream.width)x$($VideoStream.height) $($VideoStream.pix_fmt)"

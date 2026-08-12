@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
 import { assertNode24, resolveSmokeRunner } from "./run-package-smoke.mjs";
+
+const windowsSmoke = await readFile(
+  new URL("./build-and-run-windows-x64.ps1", import.meta.url),
+  "utf8",
+);
 
 test("preserves the existing Apple Silicon macOS smoke runner", () => {
   const runner = resolveSmokeRunner({ platform: "darwin", architecture: "arm64" });
@@ -35,6 +41,31 @@ test("uses Windows PowerShell 5.1 for the Windows x64 smoke runner", () => {
     "-File",
   ]);
   assert.equal(path.win32.basename(runner.args[6]), "build-and-run-windows-x64.ps1");
+});
+
+test("Windows smoke creates and inspects PNG fixtures without FFmpeg PNG support", () => {
+  assert.match(
+    windowsSmoke,
+    /New-Object System\.Drawing\.Bitmap -ArgumentList 2400, 1500/,
+  );
+  assert.match(
+    windowsSmoke,
+    /\[System\.Drawing\.Imaging\.ImageFormat\]::Png/,
+  );
+  assert.match(
+    windowsSmoke,
+    /Write-OversizedPng -Source \$ImageFixture -Destination/,
+  );
+  assert.match(
+    windowsSmoke,
+    /function Assert-ImageBounds[\s\S]*\$Image\.Width[\s\S]*\$Image\.Height/,
+  );
+  assert.match(windowsSmoke, /\$SourceImage\.Dispose\(\)/);
+  assert.match(windowsSmoke, /\$Graphics\.Dispose\(\)/);
+  assert.match(windowsSmoke, /\$Bitmap\.Dispose\(\)/);
+  assert.match(windowsSmoke, /\$Image\.Dispose\(\)/);
+  assert.doesNotMatch(windowsSmoke, /scale=2400:1500/);
+  assert.doesNotMatch(windowsSmoke, /Assert-ImageBounds -Ffprobe/);
 });
 
 test("rejects unsupported package-smoke platforms", () => {
