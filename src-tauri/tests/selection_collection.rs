@@ -86,20 +86,17 @@ fn discovery_matches_punctuation_and_uses_stable_depth_first_order() {
     let relative = discovered
         .folders
         .iter()
-        .map(|path| {
-            path.strip_prefix(&ticket)
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
-        })
+        .map(|path| path.strip_prefix(&ticket).unwrap().to_path_buf())
         .collect::<Vec<_>>();
 
     assert_eq!(
         relative,
         [
-            "A/Deliverables",
-            "A/Deliverables/Nested Master-Files",
-            "B/02_master files"
+            Path::new("A").join("Deliverables"),
+            Path::new("A")
+                .join("Deliverables")
+                .join("Nested Master-Files"),
+            Path::new("B").join("02_master files")
         ]
     );
 }
