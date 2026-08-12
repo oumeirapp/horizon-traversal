@@ -1,21 +1,27 @@
 use std::ffi::OsString;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+use horizon_traversal_lib::pipeline::videos::probe_video;
 use horizon_traversal_lib::pipeline::videos::{
-    probe_video, resize_videos, MediaToolRunner, NativeTool, ToolOutput, ToolRunError,
+    resize_videos, MediaToolRunner, NativeTool, ToolOutput, ToolRunError,
 };
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+use std::path::Path;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+use std::process::Command;
 use tempfile::tempdir;
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 struct ProcessRunner {
     ffmpeg: PathBuf,
     ffprobe: PathBuf,
 }
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 impl ProcessRunner {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     fn bundled() -> Self {
         let binaries = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
         Self {
@@ -25,6 +31,7 @@ impl ProcessRunner {
     }
 }
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 impl MediaToolRunner for ProcessRunner {
     fn run(&self, tool: NativeTool, arguments: &[OsString]) -> Result<ToolOutput, ToolRunError> {
         let executable = match tool {
@@ -46,6 +53,7 @@ impl MediaToolRunner for ProcessRunner {
     }
 }
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn run_ffmpeg(runner: &ProcessRunner, arguments: &[&str]) {
     let arguments = arguments.iter().map(OsString::from).collect::<Vec<_>>();
     let output = runner.run(NativeTool::Ffmpeg, &arguments).unwrap();
@@ -56,6 +64,7 @@ fn run_ffmpeg(runner: &ProcessRunner, arguments: &[&str]) {
     );
 }
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn extract_aac_audio(runner: &ProcessRunner, path: &Path) -> Vec<u8> {
     let arguments = [
         "-v",
