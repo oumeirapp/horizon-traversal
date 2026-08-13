@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  AppSettings,
   PipelineEvent,
   PipelineSummary,
   SelectionSummary,
@@ -11,6 +12,8 @@ const nativeMocks = vi.hoisted(() => ({
   validateSelection: vi.fn(),
   startPipeline: vi.fn(),
   openLastOutput: vi.fn(),
+  loadSettings: vi.fn(),
+  saveSettings: vi.fn(),
   openDialog: vi.fn(),
 }));
 
@@ -18,6 +21,8 @@ vi.mock("./lib/native", () => ({
   validateSelection: nativeMocks.validateSelection,
   startPipeline: nativeMocks.startPipeline,
   openLastOutput: nativeMocks.openLastOutput,
+  loadSettings: nativeMocks.loadSettings,
+  saveSettings: nativeMocks.saveSettings,
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -57,12 +62,22 @@ const warningOnlySummary: PipelineSummary = {
   errors: 0,
 };
 
+const defaultSettings: AppSettings = {
+  defaultOutputPath: "/exports",
+  theme: "dark",
+};
+
+async function settleSettings() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 async function configureValidRun() {
+  await settleSettings();
   fireEvent.change(screen.getByLabelText("Input folder"), {
     target: { value: "/tickets" },
-  });
-  fireEvent.change(screen.getByLabelText("Output folder"), {
-    target: { value: "/exports" },
   });
   await act(async () => {
     await vi.advanceTimersByTimeAsync(360);
@@ -75,18 +90,28 @@ describe("Horizon Traversal workbench", () => {
     nativeMocks.validateSelection.mockReset();
     nativeMocks.startPipeline.mockReset();
     nativeMocks.openLastOutput.mockReset();
+    nativeMocks.loadSettings.mockReset();
+    nativeMocks.saveSettings.mockReset();
     nativeMocks.openDialog.mockReset();
     nativeMocks.validateSelection.mockResolvedValue(validSelection);
+    nativeMocks.loadSettings.mockResolvedValue(defaultSettings);
+    nativeMocks.saveSettings.mockImplementation(async (settings: AppSettings) => settings);
+    document.documentElement.dataset.theme = "dark";
   });
 
-  it("starts with an accessible, incomplete transfer route", () => {
+  it("starts with an accessible, incomplete transfer route", async () => {
     render(<App />);
+    await settleSettings();
 
     expect(
       screen.getByRole("heading", { name: "Horizon Traversal" }),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Start processing" })).toBeDisabled();
-    expect(screen.getByText("Choose both folders")).toBeVisible();
+    expect(screen.getByText("Choose an input folder")).toBeVisible();
+    expect(screen.queryByLabelText("Output folder")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Input folder").closest(".field")).toHaveClass(
+      "field--full",
+    );
     const route = screen.getByRole("list", { name: "Processing stages" });
     expect(route).toBeVisible();
     expect(within(route).getAllByRole("listitem")).toHaveLength(6);
@@ -96,6 +121,72 @@ describe("Horizon Traversal workbench", () => {
     expect(screen.getByRole("tab", { name: /Activity/ })).toHaveAttribute(
       "aria-selected",
       "true",
+    );
+  });
+
+  it("previews appearance changes and restores the saved theme on cancel", async () => {
+    render(<App />);
+    await settleSettings();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    expect(screen.getByRole("dialog", { name: "Settings" })).toBeVisible();
+    expect(
+      screen.getByRole("textbox", { name: "Default output folder" }),
+    ).toHaveValue("/exports");
+
+    fireEvent.click(screen.getByRole("radio", { name: /^Light/ }));
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(nativeMocks.saveSettings).not.toHaveBeenCalled();
+  });
+
+  it("applies the saved appearance when settings load", async () => {
+    nativeMocks.loadSettings.mockResolvedValueOnce({
+      ...defaultSettings,
+      theme: "light",
+    });
+
+    render(<App />);
+    await settleSettings();
+
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+  });
+
+  it("saves the selected theme and default output folder", async () => {
+    nativeMocks.openDialog.mockResolvedValueOnce("/new-exports");
+    render(<App />);
+    await settleSettings();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    fireEvent.click(screen.getByRole("radio", { name: /^Light/ }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Choose output folder" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+      await Promise.resolve();
+    });
+
+    expect(nativeMocks.saveSettings).toHaveBeenCalledWith({
+      defaultOutputPath: "/new-exports",
+      theme: "light",
+    });
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+    expect(
+      screen.queryByRole("dialog", { name: "Settings" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Input folder"), {
+      target: { value: "/tickets" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(360);
+    });
+    expect(nativeMocks.validateSelection).toHaveBeenLastCalledWith(
+      expect.objectContaining({ outputPath: "/new-exports" }),
     );
   });
 
@@ -128,11 +219,10 @@ describe("Horizon Traversal workbench", () => {
     );
     render(<App />);
 
+    await settleSettings();
+
     fireEvent.change(screen.getByLabelText("Input folder"), {
       target: { value: "/tickets" },
-    });
-    fireEvent.change(screen.getByLabelText("Output folder"), {
-      target: { value: "/exports" },
     });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(360);

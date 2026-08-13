@@ -1,5 +1,12 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
+export type AppTheme = "dark" | "light";
+
+export interface AppSettings {
+  defaultOutputPath: string;
+  theme: AppTheme;
+}
+
 export interface SelectionRequest {
   inputPath: string;
   outputPath: string;
@@ -123,4 +130,12 @@ export function startPipeline(
 
 export function openLastOutput(): Promise<void> {
   return invoke<void>("open_last_output");
+}
+
+export function loadSettings(): Promise<AppSettings> {
+  return invoke<AppSettings>("load_settings");
+}
+
+export function saveSettings(settings: AppSettings): Promise<AppSettings> {
+  return invoke<AppSettings>("save_settings", { settings });
 }

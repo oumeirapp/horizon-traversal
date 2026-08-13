@@ -15,6 +15,7 @@ use crate::pipeline::native::resolve_pdfium_library;
 use crate::pipeline::pdf::shared_pdfium;
 use crate::pipeline::selection::{parse_filter, select_tickets, validate_roots, SelectionError};
 use crate::pipeline::videos::TauriMediaToolRunner;
+use crate::settings::{self, AppSettings, SettingsError, SettingsState};
 use crate::state::AppState;
 
 struct ChannelEventSink(Channel<PipelineEvent>);
@@ -23,6 +24,40 @@ impl PipelineEventSink for ChannelEventSink {
     fn emit(&self, event: PipelineEvent) {
         let _ = self.0.send(event);
     }
+}
+
+#[tauri::command]
+pub async fn load_settings(
+    app: AppHandle,
+    state: State<'_, SettingsState>,
+) -> Result<AppSettings, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let defaults = settings::default_settings(&app).map_err(app_error_from_settings)?;
+        let settings_path = settings::settings_path(&app).map_err(app_error_from_settings)?;
+        state
+            .load(&settings_path, defaults)
+            .map_err(app_error_from_settings)
+    })
+    .await
+    .map_err(|error| AppError::new("settingsWorkerFailed", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn save_settings(
+    app: AppHandle,
+    state: State<'_, SettingsState>,
+    settings: AppSettings,
+) -> Result<AppSettings, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings_path = settings::settings_path(&app).map_err(app_error_from_settings)?;
+        state
+            .save(&settings_path, settings)
+            .map_err(app_error_from_settings)
+    })
+    .await
+    .map_err(|error| AppError::new("settingsWorkerFailed", error.to_string()))?
 }
 
 #[tauri::command]
@@ -274,6 +309,10 @@ fn app_error_from_selection(error: SelectionError) -> AppError {
             AppError::new("selectionUnavailable", error.to_string())
         }
     }
+}
+
+fn app_error_from_settings(error: SettingsError) -> AppError {
+    AppError::new(error.code(), error.to_string())
 }
 
 #[cfg(test)]

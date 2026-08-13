@@ -13,9 +13,17 @@ import {
 import { open } from "@tauri-apps/plugin-dialog";
 import { ActivityPanel } from "./components/ActivityPanel";
 import {
+  SETTINGS_DIALOG_ID,
+  SettingsDialog,
+} from "./components/SettingsDialog";
+import {
+  loadSettings,
   openLastOutput,
+  saveSettings,
   startPipeline,
   validateSelection,
+  type AppSettings,
+  type AppTheme,
   type PipelineEvent,
   type PipelineStage,
   type ProcessingOptions,
@@ -46,6 +54,10 @@ const DEFAULT_PROCESSING_OPTIONS: ProcessingOptions = {
   images: true,
   video: true,
 };
+
+function applyTheme(theme: AppTheme) {
+  document.documentElement.dataset.theme = theme;
+}
 
 const PROCESSING_OPTION_CONTROLS: Array<{
   id: keyof ProcessingOptions;
@@ -277,6 +289,25 @@ function ResetIcon() {
     >
       <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
       <path d="M3 3v5h5" />
+    </svg>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.42 1.42-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20h-2v-.08a1.7 1.7 0 0 0-1.1-1.57 1.7 1.7 0 0 0-1.88.34l-.06.06-1.42-1.42.06-.06A1.7 1.7 0 0 0 9.35 15a1.7 1.7 0 0 0-1.56-1.03H7v-2h.08a1.7 1.7 0 0 0 1.57-1.1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 1.42-1.42.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.56V6h2v.08a1.7 1.7 0 0 0 1.1 1.57 1.7 1.7 0 0 0 1.88-.34l.06-.06 1.42 1.42-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03H20v2h-.08A1.7 1.7 0 0 0 19.4 15Z" />
     </svg>
   );
 }
@@ -530,7 +561,11 @@ function RunResult({
 
 function App() {
   const [inputPath, setInputPath] = useState("");
-  const [outputPath, setOutputPath] = useState("");
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsLoadingError, setSettingsLoadingError] = useState<string | null>(null);
+  const [settingsSaveError, setSettingsSaveError] = useState<string | null>(null);
+  const [savingSettings, setSavingSettings] = useState(false);
   const [ticketFilter, setTicketFilter] = useState("");
   const [processingOptions, setProcessingOptions] = useState<ProcessingOptions>(
     DEFAULT_PROCESSING_OPTIONS,
@@ -545,6 +580,7 @@ function App() {
     dispatch,
     runGenerationRef,
   );
+  const outputPath = settings?.defaultOutputPath ?? "";
   const request = useMemo(
     () => ({ inputPath, outputPath, ticketFilter, processingOptions }),
     [inputPath, outputPath, processingOptions, ticketFilter],
@@ -596,21 +632,65 @@ function App() {
   );
   const activeStages = selectedStages(processingOptions);
 
-  async function chooseFolder(kind: "input" | "output") {
+  useEffect(() => {
+    let active = true;
+    void loadSettings()
+      .then((loaded) => {
+        if (!active) return;
+        setSettings(loaded);
+        setSettingsLoadingError(null);
+        applyTheme(loaded.theme);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setSettingsLoadingError(nativeErrorMessage(error));
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function chooseInputFolder() {
     setDialogError(null);
     try {
       const selected = await open({
         directory: true,
         multiple: false,
-        title: kind === "input" ? "Choose ticket source" : "Choose transfer destination",
-        defaultPath: (kind === "input" ? inputPath : outputPath) || undefined,
+        title: "Choose ticket source",
+        defaultPath: inputPath || undefined,
       });
       if (typeof selected === "string") {
-        if (kind === "input") setInputPath(selected);
-        else setOutputPath(selected);
+        setInputPath(selected);
       }
     } catch (error) {
       setDialogError(nativeErrorMessage(error));
+    }
+  }
+
+  function openSettings() {
+    if (settings === null) return;
+    setSettingsSaveError(null);
+    setSettingsOpen(true);
+  }
+
+  function cancelSettings() {
+    if (settings !== null) applyTheme(settings.theme);
+    setSettingsSaveError(null);
+    setSettingsOpen(false);
+  }
+
+  async function persistSettings(nextSettings: AppSettings) {
+    setSavingSettings(true);
+    setSettingsSaveError(null);
+    try {
+      const saved = await saveSettings(nextSettings);
+      setSettings(saved);
+      applyTheme(saved.theme);
+      setSettingsOpen(false);
+    } catch (error) {
+      setSettingsSaveError(nativeErrorMessage(error));
+    } finally {
+      setSavingSettings(false);
     }
   }
 
@@ -709,9 +789,23 @@ function App() {
             <p>Approved asset transfer</p>
           </div>
         </div>
-        <div className={`app-status app-status--${run.phase}`} role="status">
-          <span aria-hidden="true" />
-          {statusLabel}
+        <div className="app-header__actions">
+          <div className={`app-status app-status--${run.phase}`} role="status">
+            <span aria-hidden="true" />
+            {statusLabel}
+          </div>
+          <button
+            type="button"
+            className="settings-trigger"
+            onClick={openSettings}
+            disabled={settings === null}
+            aria-label="Open settings"
+            aria-haspopup="dialog"
+            aria-expanded={settingsOpen}
+            aria-controls={settingsOpen ? SETTINGS_DIALOG_ID : undefined}
+          >
+            <SettingsIcon />
+          </button>
         </div>
         <p className="sr-only" aria-live="polite" aria-atomic="true">
           {runAnnouncement}
@@ -728,7 +822,7 @@ function App() {
             <p>Folders stay on this device.</p>
           </div>
           <form onSubmit={handleStart} noValidate>
-            <div className="field">
+            <div className="field field--full">
               <label htmlFor="input-path">Input folder</label>
               <div className={`path-control${inputIssue ? " path-control--invalid" : ""}`}>
                 <FolderIcon />
@@ -742,36 +836,13 @@ function App() {
                   aria-invalid={inputIssue !== undefined}
                   aria-describedby="input-help"
                 />
-                <button type="button" onClick={() => void chooseFolder("input")} disabled={configurationLocked}>
+                <button type="button" onClick={() => void chooseInputFolder()} disabled={configurationLocked}>
                   Choose folder
                 </button>
               </div>
               <div id="input-help">
                 {inputPath === "" ? <p className="field-message">Required · contains ticket folders</p> : null}
                 <FieldIssue issue={inputIssue} />
-              </div>
-            </div>
-
-            <div className="field">
-              <label htmlFor="output-path">Output folder</label>
-              <div className={`path-control${outputIssue ? " path-control--invalid" : ""}`}>
-                <FolderIcon />
-                <input
-                  id="output-path"
-                  value={outputPath}
-                  onChange={(event) => setOutputPath(event.target.value)}
-                  placeholder="Path for collected assets"
-                  disabled={configurationLocked}
-                  aria-invalid={outputIssue !== undefined}
-                  aria-describedby="output-help"
-                />
-                <button type="button" onClick={() => void chooseFolder("output")} disabled={configurationLocked}>
-                  Choose folder
-                </button>
-              </div>
-              <div id="output-help">
-                {outputPath === "" ? <p className="field-message">Required · must not overlap the input</p> : null}
-                <FieldIssue issue={outputIssue} />
               </div>
             </div>
 
@@ -802,8 +873,14 @@ function App() {
                       ? "Checking tickets…"
                       : currentValidation.status === "error"
                         ? "Validation unavailable"
-                        : summary === null
-                          ? "Choose both folders"
+                        : settingsLoadingError !== null
+                          ? "Settings unavailable"
+                          : settings === null
+                            ? "Loading settings…"
+                            : outputPath === ""
+                              ? "Set a default output folder in Settings"
+                              : summary === null
+                                ? "Choose an input folder"
                           : `${summary.tickets.length} ticket${summary.tickets.length === 1 ? "" : "s"} matched`}
                   </strong>
                 </div>
@@ -844,8 +921,18 @@ function App() {
             </fieldset>
 
             {dialogError === null ? null : <p className="form-alert" role="alert">{dialogError}</p>}
+            {settingsLoadingError === null ? null : (
+              <p className="form-alert" role="alert">
+                Settings could not be loaded: {settingsLoadingError}
+              </p>
+            )}
             {currentValidation.error === null ? null : (
               <p className="form-alert" role="alert">{currentValidation.error}</p>
+            )}
+            {outputIssue === undefined ? null : (
+              <p className="form-alert" role="alert">
+                {outputIssue.message} Update the default output folder in Settings.
+              </p>
             )}
             <FieldIssue issue={generalIssue} />
             {summary?.warnings.map((warning) => (
@@ -954,6 +1041,17 @@ function App() {
 
         <ActivityPanel logs={run.logs} />
       </div>
+      {settings === null ? null : (
+        <SettingsDialog
+          open={settingsOpen}
+          settings={settings}
+          saving={savingSettings}
+          saveError={settingsSaveError}
+          onThemePreview={applyTheme}
+          onSave={persistSettings}
+          onCancel={cancelSettings}
+        />
+      )}
     </main>
   );
 }

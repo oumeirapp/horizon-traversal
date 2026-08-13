@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
+  loadSettings,
   openLastOutput,
+  saveSettings,
   startPipeline,
   validateSelection,
+  type AppSettings,
+  type AppTheme,
   type PipelineEvent,
   type PipelineStage,
   type PipelineSummary,
@@ -41,6 +45,11 @@ const request: SelectionRequest = {
     images: false,
     video: true,
   },
+};
+
+const appSettings: AppSettings = {
+  defaultOutputPath: "/exports",
+  theme: "dark",
 };
 
 const selection: SelectionSummary = {
@@ -111,6 +120,27 @@ describe("native Tauri boundary", () => {
     expect(tauriMock.invoke).toHaveBeenCalledWith("open_last_output");
   });
 
+  it("loads the persisted application settings", async () => {
+    tauriMock.invoke.mockResolvedValue(appSettings);
+
+    await expect(loadSettings()).resolves.toBe(appSettings);
+    expect(tauriMock.invoke).toHaveBeenCalledWith("load_settings");
+  });
+
+  it("saves the complete settings object and returns the normalized result", async () => {
+    const normalized = {
+      ...appSettings,
+      defaultOutputPath: "/exports/normalized",
+      theme: "light" as const,
+    };
+    tauriMock.invoke.mockResolvedValue(normalized);
+
+    await expect(saveSettings(appSettings)).resolves.toBe(normalized);
+    expect(tauriMock.invoke).toHaveBeenCalledWith("save_settings", {
+      settings: appSettings,
+    });
+  });
+
   it("exposes the intended public TypeScript contract", () => {
     expectTypeOf(validateSelection).returns.toEqualTypeOf<
       Promise<SelectionSummary>
@@ -118,6 +148,10 @@ describe("native Tauri boundary", () => {
     expectTypeOf(startPipeline).returns.toEqualTypeOf<
       Promise<PipelineSummary>
     >();
+    expectTypeOf(loadSettings).returns.toEqualTypeOf<Promise<AppSettings>>();
+    expectTypeOf(saveSettings).returns.toEqualTypeOf<Promise<AppSettings>>();
+    expectTypeOf<AppSettings["theme"]>().toEqualTypeOf<AppTheme>();
+    expectTypeOf<AppTheme>().toEqualTypeOf<"dark" | "light">();
     expectTypeOf<PipelineStage>().toEqualTypeOf<
       "discover" | "copy" | "pdf" | "images" | "video" | "report"
     >();
