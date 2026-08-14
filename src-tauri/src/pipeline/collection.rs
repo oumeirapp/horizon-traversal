@@ -3,14 +3,16 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use filetime::{set_file_handle_times, FileTime};
-use regex::Regex;
 use thiserror::Error;
 
+use super::discovery::{
+    classify_source_folder_name, deliverables_version_number, is_master_version_folder_name,
+    is_master_video_category_name,
+};
 use super::fs_safety::{is_link_like, metadata_is_link_like};
-use super::types::{CollectionOutcome, CopiedAsset, PipelineNotice};
+use super::types::{CollectionOutcome, CopiedAsset, PipelineNotice, SourceRoot, SourceRootKind};
 
 pub const SUPPORTED_EXTENSIONS: &[&str] =
     &["jpg", "jpeg", "png", "gif", "pdf", "mp4", "avi", "mov"];
@@ -54,13 +56,6 @@ pub enum CollectionError {
         #[source]
         source: io::Error,
     },
-}
-
-fn version_pattern() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
-        Regex::new(r"(?i)v(?:er(?:sion)?)?\s*[_-]?\s*(\d+)").expect("version folder regex is valid")
-    })
 }
 
 pub fn is_supported_asset(path: &Path) -> bool {
@@ -154,15 +149,16 @@ fn collision_name(source: &Path, counter: u64) -> OsString {
 }
 
 pub fn collect_from_source(
-    source: &Path,
+    source: &SourceRoot,
     destination: &Path,
 ) -> Result<CollectionOutcome, CollectionError> {
-    collect_directory(source, destination, false, source)
+    collect_directory(&source.path, destination, source.kind, false, &source.path)
 }
 
 fn collect_directory(
     current: &Path,
     destination: &Path,
+    source_kind: SourceRootKind,
     inside_version: bool,
     traversal_root: &Path,
 ) -> Result<CollectionOutcome, CollectionError> {
@@ -181,6 +177,13 @@ fn collect_directory(
     let mut outcome = CollectionOutcome::default();
     let mut directories = Vec::new();
     let mut version_directories = Vec::new();
+    let at_master_root = source_kind == SourceRootKind::MasterFiles
+        && (current == traversal_root
+            || current
+                .file_name()
+                .and_then(OsStr::to_str)
+                .and_then(classify_source_folder_name)
+                == Some(SourceRootKind::MasterFiles));
 
     for entry in &entries {
         let path = entry.path();
@@ -213,6 +216,10 @@ fn collect_directory(
 
             match copy_with_collision_suffix(&path, destination) {
                 Ok(copied_path) => {
+                    let relative_source = path
+                        .strip_prefix(traversal_root)
+                        .unwrap_or(&path)
+                        .to_path_buf();
                     let source_path = fs::canonicalize(&path).unwrap_or(path.clone());
                     outcome.notices.push(PipelineNotice::success(
                         format!("Copied {}", entry.file_name().to_string_lossy()),
@@ -220,6 +227,7 @@ fn collect_directory(
                     ));
                     outcome.copied.push(CopiedAsset {
                         source: source_path,
+                        relative_source,
                         destination: copied_path,
                     });
                 }
@@ -232,24 +240,49 @@ fn collect_directory(
                 }
             }
         } else if file_type.is_dir() {
+            let folder_name = entry.file_name();
+            let folder_name = folder_name.to_string_lossy();
+            if source_kind == SourceRootKind::Deliverables
+                && classify_source_folder_name(&folder_name).is_some()
+            {
+                // Discovery returns nested source roots separately. Do not traverse one
+                // through a Deliverables policy first, which could bypass Master rules
+                // and copy the same files twice.
+                continue;
+            }
+            if source_kind == SourceRootKind::MasterFiles {
+                let skip_reason = if is_master_version_folder_name(&folder_name) {
+                    Some("version folder")
+                } else if at_master_root && is_master_video_category_name(&folder_name) {
+                    Some("Video category")
+                } else {
+                    None
+                };
+
+                if let Some(reason) = skip_reason {
+                    let relative = path.strip_prefix(traversal_root).unwrap_or(&path);
+                    outcome.notices.push(PipelineNotice::info(
+                        format!("Skipped Master Files {reason}: {}", relative.display()),
+                        Some(path),
+                    ));
+                    continue;
+                }
+            }
+
             directories.push(path.clone());
-            if !inside_version {
-                if let Some(captures) =
-                    version_pattern().captures(&entry.file_name().to_string_lossy())
-                {
-                    if let Ok(number) = captures[1].parse::<u64>() {
-                        let relative = path
-                            .strip_prefix(traversal_root.parent().unwrap_or(traversal_root))
-                            .unwrap_or(&path);
-                        outcome.notices.push(PipelineNotice::info(
-                            format!(
-                                "Version folder detected: {} (v{number})",
-                                relative.display()
-                            ),
-                            Some(path.clone()),
-                        ));
-                        version_directories.push((number, path));
-                    }
+            if source_kind == SourceRootKind::Deliverables && !inside_version {
+                if let Some(number) = deliverables_version_number(&folder_name) {
+                    let relative = path
+                        .strip_prefix(traversal_root.parent().unwrap_or(traversal_root))
+                        .unwrap_or(&path);
+                    outcome.notices.push(PipelineNotice::info(
+                        format!(
+                            "Version folder detected: {} (v{number})",
+                            relative.display()
+                        ),
+                        Some(path.clone()),
+                    ));
+                    version_directories.push((number, path));
                 }
             }
         }
@@ -257,7 +290,7 @@ fn collect_directory(
 
     if !inside_version && !version_directories.is_empty() {
         let (_, selected) = version_directories
-            .into_iter()
+            .iter()
             .max_by(|(left_number, left_path), (right_number, right_path)| {
                 left_number
                     .cmp(right_number)
@@ -271,17 +304,27 @@ fn collect_directory(
             ),
             Some(selected.clone()),
         ));
-        outcome.append(collect_directory(
-            &selected,
-            destination,
-            true,
-            traversal_root,
-        )?);
+
+        for directory in directories {
+            let is_version_directory = version_directories
+                .iter()
+                .any(|(_, version_directory)| version_directory == &directory);
+            if !is_version_directory || directory == *selected {
+                outcome.append(collect_directory(
+                    &directory,
+                    destination,
+                    source_kind,
+                    is_version_directory,
+                    traversal_root,
+                )?);
+            }
+        }
     } else {
         for directory in directories {
             outcome.append(collect_directory(
                 &directory,
                 destination,
+                source_kind,
                 inside_version,
                 traversal_root,
             )?);

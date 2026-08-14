@@ -7,7 +7,7 @@ use horizon_traversal_lib::pipeline::collection::{
 };
 use horizon_traversal_lib::pipeline::discovery::find_source_folders;
 use horizon_traversal_lib::pipeline::selection::{select_tickets, validate_roots, SelectionError};
-use horizon_traversal_lib::pipeline::types::NoticeLevel;
+use horizon_traversal_lib::pipeline::types::{NoticeLevel, SourceRoot, SourceRootKind};
 use tempfile::tempdir;
 
 fn write(path: &Path, contents: &str) {
@@ -86,37 +86,242 @@ fn discovery_matches_punctuation_and_uses_stable_depth_first_order() {
     let relative = discovered
         .folders
         .iter()
-        .map(|path| path.strip_prefix(&ticket).unwrap().to_path_buf())
+        .map(|source| {
+            (
+                source.path.strip_prefix(&ticket).unwrap().to_path_buf(),
+                source.kind,
+            )
+        })
         .collect::<Vec<_>>();
 
     assert_eq!(
         relative,
         [
-            Path::new("A").join("Deliverables"),
-            Path::new("A")
-                .join("Deliverables")
-                .join("Nested Master-Files"),
-            Path::new("B").join("02_master files")
+            (
+                Path::new("A").join("Deliverables"),
+                SourceRootKind::Deliverables
+            ),
+            (
+                Path::new("A")
+                    .join("Deliverables")
+                    .join("Nested Master-Files"),
+                SourceRootKind::MasterFiles
+            ),
+            (
+                Path::new("B").join("02_master files"),
+                SourceRootKind::MasterFiles
+            )
         ]
     );
 }
 
 #[test]
-fn collection_selects_highest_version_and_stops_selecting_inside_it() {
+fn discovery_does_not_add_sources_nested_under_master() {
+    let temp = tempdir().unwrap();
+    let ticket = temp.path().join("P1");
+    fs::create_dir_all(ticket.join("Master Files/Video/Nested Deliverables")).unwrap();
+    fs::create_dir_all(ticket.join("Master Files/02 - VIDEO/Nested Master Files")).unwrap();
+    fs::create_dir_all(ticket.join("Master Files/Versions/Nested Deliverables")).unwrap();
+    fs::create_dir_all(ticket.join("Master Files/ordinary/Version 2/Nested Master Files")).unwrap();
+    fs::create_dir_all(
+        ticket.join("Master Files/ordinary/Nested Deliverables/Ver2/Deep Master Files"),
+    )
+    .unwrap();
+
+    let discovered = find_source_folders(&ticket).unwrap();
+    let relative = discovered
+        .folders
+        .iter()
+        .map(|source| {
+            (
+                source.path.strip_prefix(&ticket).unwrap().to_path_buf(),
+                source.kind,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        relative,
+        [(
+            Path::new("Master Files").to_path_buf(),
+            SourceRootKind::MasterFiles
+        )]
+    );
+}
+
+#[test]
+fn nested_master_source_is_collected_once_with_master_rules() {
+    let temp = tempdir().unwrap();
+    let ticket = temp.path().join("P1");
+    let output = temp.path().join("output");
+    write(
+        &ticket.join("Deliverables/Nested Master Files/Video/excluded.mp4"),
+        "excluded",
+    );
+    write(
+        &ticket.join("Deliverables/Nested Master Files/Print/kept.jpg"),
+        "kept",
+    );
+    fs::create_dir_all(&output).unwrap();
+
+    let discovery = find_source_folders(&ticket).unwrap();
+    assert_eq!(discovery.folders.len(), 2);
+    for source in discovery.folders {
+        collect_from_source(&source, &output).unwrap();
+    }
+
+    assert_eq!(names(&output), ["kept.jpg"]);
+}
+
+#[test]
+fn nested_sources_do_not_escape_deliverables_version_selection() {
+    let temp = tempdir().unwrap();
+    let ticket = temp.path().join("P1");
+    let output = temp.path().join("output");
+    write(
+        &ticket.join("Deliverables/08072026/Ordinary Master Files/Print/ordinary.jpg"),
+        "ordinary",
+    );
+    write(
+        &ticket.join("Deliverables/Ver1/Old Master Files/Print/old.jpg"),
+        "old",
+    );
+    write(
+        &ticket.join("Deliverables/Ver2/Latest Master Files/Print/latest.jpg"),
+        "latest",
+    );
+    fs::create_dir_all(&output).unwrap();
+
+    let discovery = find_source_folders(&ticket).unwrap();
+    assert_eq!(discovery.folders.len(), 3);
+    assert!(discovery
+        .folders
+        .iter()
+        .all(|source| !source.path.to_string_lossy().contains("Ver1")));
+    for source in discovery.folders {
+        collect_from_source(&source, &output).unwrap();
+    }
+
+    assert_eq!(names(&output), ["latest.jpg", "ordinary.jpg"]);
+}
+
+#[test]
+fn source_named_version_siblings_do_not_change_deliverables_selection() {
+    let temp = tempdir().unwrap();
+    let ticket = temp.path().join("P1");
+    let output = temp.path().join("output");
+    write(
+        &ticket.join("Deliverables/Ver1/selected.jpg"),
+        "selected version",
+    );
+    write(
+        &ticket.join("Deliverables/V2 Master Files/Print/source.jpg"),
+        "separate source",
+    );
+    fs::create_dir_all(&output).unwrap();
+
+    let discovery = find_source_folders(&ticket).unwrap();
+    assert_eq!(discovery.folders.len(), 2);
+    for source in discovery.folders {
+        collect_from_source(&source, &output).unwrap();
+    }
+
+    assert_eq!(names(&output), ["selected.jpg", "source.jpg"]);
+}
+
+#[test]
+fn master_collection_skips_video_categories_and_version_subtrees() {
+    let temp = tempdir().unwrap();
+    let source = temp.path().join("Master Files");
+    let output = temp.path().join("output");
+    fs::create_dir_all(&output).unwrap();
+    write(&source.join("cover.jpg"), "cover");
+    write(&source.join("Video/immediate.jpg"), "skip");
+    write(&source.join("02 - VIDEO/numbered.jpg"), "skip");
+    write(&source.join("Versions/versions.jpg"), "skip");
+    write(&source.join("Version/singular-version.jpg"), "skip");
+    write(&source.join("01. Versions/numbered-versions.jpg"), "skip");
+    write(&source.join("Version 2/version.jpg"), "skip");
+    write(&source.join("ordinary/asset.png"), "asset");
+    write(&source.join("ordinary/Video/allowed.jpg"), "allowed");
+    write(&source.join("ordinary/Ver2/old.jpg"), "skip");
+    write(&source.join("ordinary/deep/v2/old-deep.jpg"), "skip");
+    write(
+        &source.join("ordinary/Nested Master Files/Video/nested-video.jpg"),
+        "skip",
+    );
+    write(
+        &source.join("ordinary/Nested Master Files/keep.pdf"),
+        "keep",
+    );
+
+    let outcome = collect_from_source(
+        &SourceRoot {
+            path: source.clone(),
+            kind: SourceRootKind::MasterFiles,
+        },
+        &output,
+    )
+    .unwrap();
+
+    assert_eq!(
+        names(&output),
+        ["allowed.jpg", "asset.png", "cover.jpg", "keep.pdf"]
+    );
+
+    let mut relative_sources = outcome
+        .copied
+        .iter()
+        .map(|asset| asset.relative_source.clone())
+        .collect::<Vec<_>>();
+    relative_sources.sort();
+    assert_eq!(
+        relative_sources,
+        [
+            Path::new("cover.jpg").to_path_buf(),
+            Path::new("ordinary/Nested Master Files/keep.pdf").to_path_buf(),
+            Path::new("ordinary/Video/allowed.jpg").to_path_buf(),
+            Path::new("ordinary/asset.png").to_path_buf(),
+        ]
+    );
+
+    let skipped = outcome
+        .notices
+        .iter()
+        .filter(|notice| notice.level == NoticeLevel::Info)
+        .collect::<Vec<_>>();
+    assert_eq!(skipped.len(), 9);
+    assert!(skipped.iter().all(|notice| {
+        notice.message.starts_with("Skipped Master Files ") && notice.path.is_some()
+    }));
+}
+
+#[test]
+fn collection_selects_highest_version_and_keeps_ordinary_siblings() {
     let temp = tempdir().unwrap();
     let source = temp.path().join("Deliverables");
     let output = temp.path().join("output");
     fs::create_dir_all(&output).unwrap();
     write(&source.join("top.jpg"), "top");
-    write(&source.join("version 1/old.jpg"), "old");
-    write(&source.join("version 2/new.jpg"), "new");
-    write(&source.join("version 2/version 99/nested.jpg"), "nested");
-    write(&source.join("ordinary/skipped.jpg"), "skipped");
+    write(&source.join("Video/Ver1/old.jpg"), "old");
+    write(&source.join("Video/Ver2/new.jpg"), "new");
+    write(&source.join("Video/Ver2/version 99/nested.jpg"), "nested");
+    write(&source.join("Video/08072026/asset.jpg"), "asset");
 
-    let outcome = collect_from_source(&source, &output).unwrap();
+    let outcome = collect_from_source(
+        &SourceRoot {
+            path: source,
+            kind: SourceRootKind::Deliverables,
+        },
+        &output,
+    )
+    .unwrap();
 
-    assert_eq!(outcome.copied.len(), 3);
-    assert_eq!(names(&output), ["nested.jpg", "new.jpg", "top.jpg"]);
+    assert_eq!(outcome.copied.len(), 4);
+    assert_eq!(
+        names(&output),
+        ["asset.jpg", "nested.jpg", "new.jpg", "top.jpg"]
+    );
 }
 
 #[test]
@@ -128,7 +333,14 @@ fn equal_version_numbers_use_a_deterministic_name_tiebreaker() {
     write(&source.join("v2 alpha/alpha.jpg"), "alpha");
     write(&source.join("version 2 zulu/zulu.jpg"), "zulu");
 
-    collect_from_source(&source, &output).unwrap();
+    collect_from_source(
+        &SourceRoot {
+            path: source,
+            kind: SourceRootKind::Deliverables,
+        },
+        &output,
+    )
+    .unwrap();
 
     assert_eq!(names(&output), ["zulu.jpg"]);
 }
@@ -143,7 +355,14 @@ fn flat_collection_suffixes_collisions_and_warns_for_mov() {
     write(&source.join("B/asset.jpg"), "second");
     write(&source.join("B/clip.MOV"), "movie");
 
-    let outcome = collect_from_source(&source, &output).unwrap();
+    let outcome = collect_from_source(
+        &SourceRoot {
+            path: source,
+            kind: SourceRootKind::Deliverables,
+        },
+        &output,
+    )
+    .unwrap();
 
     assert_eq!(names(&output), ["asset.jpg", "asset_1.jpg"]);
     assert!(outcome
@@ -228,7 +447,14 @@ fn symlinks_are_skipped_in_selection_discovery_and_collection() {
 
     let output = temp.path().join("output");
     fs::create_dir_all(&output).unwrap();
-    let collected = collect_from_source(&real_ticket.join("Deliverables"), &output).unwrap();
+    let collected = collect_from_source(
+        &SourceRoot {
+            path: real_ticket.join("Deliverables"),
+            kind: SourceRootKind::Deliverables,
+        },
+        &output,
+    )
+    .unwrap();
     assert!(collected.copied.is_empty());
     assert_eq!(collected.notices.len(), 1);
 }

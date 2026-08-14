@@ -7,6 +7,7 @@ pub mod images;
 pub mod ipc;
 pub mod native;
 pub mod pdf;
+pub mod report;
 pub mod selection;
 pub mod types;
 pub mod videos;

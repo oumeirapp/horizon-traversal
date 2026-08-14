@@ -218,17 +218,6 @@ function Write-JsonFile {
   $Value | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $Path -Encoding UTF8
 }
 
-function Normalize-WindowsPathForComparison {
-  param([Parameter(Mandatory = $true)][string]$Path)
-  $Normalized = $Path
-  if ($Normalized.StartsWith("\\?\UNC\", [StringComparison]::OrdinalIgnoreCase)) {
-    $Normalized = "\\" + $Normalized.Substring(8)
-  } elseif ($Normalized.StartsWith("\\?\", [StringComparison]::OrdinalIgnoreCase)) {
-    $Normalized = $Normalized.Substring(4)
-  }
-  return [IO.Path]::GetFullPath($Normalized).TrimEnd('\')
-}
-
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
   Fail "packaged Windows smoke requires Windows"
 }
@@ -283,7 +272,7 @@ $InstallDirectory = Join-Path $Workspace "installed"
 $CargoTargetDirectory = Join-Path $Workspace "cargo-target"
 $InputDirectory = Join-Path $Workspace "input"
 $OutputDirectory = Join-Path $Workspace "output"
-$SourceDirectory = Join-Path $InputDirectory "P1 Packaged Smoke\Deliverables"
+$SourceDirectory = Join-Path $InputDirectory "P1 Packaged Smoke\Deliverables\Creative"
 $ResultPath = Join-Path $Workspace "pipeline-result.json"
 $InspectionPath = Join-Path $Workspace "bundle-inspection.json"
 $RequestPath = Join-Path $Workspace "request.json"
@@ -373,8 +362,8 @@ try {
   ) -Description "installed bundle inspection"
 
   New-Item -ItemType Directory -Path $SourceDirectory | Out-Null
-  Copy-Item -LiteralPath $PdfFixture -Destination (Join-Path $SourceDirectory "brief.pdf")
-  Write-OversizedPng -Source $ImageFixture -Destination (Join-Path $SourceDirectory "visual.png")
+  Copy-Item -LiteralPath $PdfFixture -Destination (Join-Path $SourceDirectory "Brief.pdf")
+  Write-OversizedPng -Source $ImageFixture -Destination (Join-Path $SourceDirectory "Visual_2400x1500px.png")
   Invoke-Checked -Program $SourceFfmpeg -Arguments @(
     "-hide_banner", "-loglevel", "error", "-y",
     "-f", "lavfi", "-i", "color=c=0x0c756d:s=1080x1920:r=10",
@@ -382,7 +371,7 @@ try {
     "-t", "0.2", "-shortest",
     "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
     "-c:a", "pcm_s16le",
-    (Join-Path $SourceDirectory "clip.mp4")
+    (Join-Path $SourceDirectory "Clip_0.2s_1080x1920px.mp4")
   ) -Description "video-with-audio fixture generation"
 
   $Request = [ordered]@{
@@ -413,14 +402,15 @@ try {
   }
 
   $TicketOutput = Join-Path $OutputDirectory "P1 Packaged Smoke"
-  $PdfImage = Join-Path $TicketOutput "brief.png"
-  $VisualImage = Join-Path $TicketOutput "visual.png"
-  $OutputVideo = Join-Path $TicketOutput "clip.mp4"
-  $Report = Join-Path $TicketOutput "report.txt"
-  foreach ($OutputFile in @($PdfImage, $VisualImage, $OutputVideo, $Report)) {
+  $PdfImage = Join-Path $TicketOutput "Brief.png"
+  $VisualImage = Join-Path $TicketOutput "Visual_2400x1500px.png"
+  $OutputVideo = Join-Path $TicketOutput "Clip_0.2s_1080x1920px.mp4"
+  $Report = Join-Path $TicketOutput "report.csv"
+  $AggregateReport = Join-Path $OutputDirectory "1. report.csv"
+  foreach ($OutputFile in @($PdfImage, $VisualImage, $OutputVideo, $Report, $AggregateReport)) {
     Require-File -Path $OutputFile -Label "pipeline output"
   }
-  if (Test-Path -LiteralPath (Join-Path $TicketOutput "brief.pdf")) {
+  if (Test-Path -LiteralPath (Join-Path $TicketOutput "Brief.pdf")) {
     Fail "PDF original remains after successful conversion"
   }
 
@@ -436,23 +426,20 @@ try {
     Fail "expected retained AAC audio, received $($AudioStream.codec_name)"
   }
 
-  $ExpectedReportPaths = @(
-    (Normalize-WindowsPathForComparison (Join-Path $SourceDirectory "brief.pdf")),
-    (Normalize-WindowsPathForComparison (Join-Path $SourceDirectory "visual.png")),
-    (Normalize-WindowsPathForComparison (Join-Path $SourceDirectory "clip.mp4"))
-  )
-  $ActualReportPaths = @(
-    [IO.File]::ReadAllLines($Report) |
-      Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-      ForEach-Object { Normalize-WindowsPathForComparison $_ }
-  )
-  if ($ActualReportPaths.Count -ne 3) {
-    Fail "ticket report must contain exactly three current-ticket source paths"
+  $ExpectedReport = @(
+    "Name,Ticket,Folder,Size",
+    "Brief.pdf,P1,Creative,Unknown",
+    "Clip.mp4,P1,Creative,0.2 sec 1080x1920",
+    "Visual.png,P1,Creative,2400x1500"
+  ) -join "`n"
+  $ExpectedReport += "`n"
+  $ActualReport = [IO.File]::ReadAllText($Report).Replace("`r`n", "`n")
+  if (-not $ActualReport.Equals($ExpectedReport, [StringComparison]::Ordinal)) {
+    Fail "ticket CSV does not match the exact Name-first header and filename-ordered rows"
   }
-  foreach ($ExpectedPath in $ExpectedReportPaths) {
-    if (-not ($ActualReportPaths -contains $ExpectedPath)) {
-      Fail "ticket report is missing source path: $ExpectedPath"
-    }
+  $ActualAggregateReport = [IO.File]::ReadAllText($AggregateReport).Replace("`r`n", "`n")
+  if (-not $ActualAggregateReport.Equals($ExpectedReport, [StringComparison]::Ordinal)) {
+    Fail "aggregate CSV does not match all ticket rows from the packaged run"
   }
 
   if (-not [string]::IsNullOrWhiteSpace($env:HORIZON_TRAVERSAL_SMOKE_REPORT_PATH)) {

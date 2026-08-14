@@ -6,14 +6,18 @@ use pdfium_render::prelude::Pdfium;
 
 use super::collection::{collect_from_source, replace_ticket_output};
 use super::discovery::find_source_folders;
+use super::files::{remove_regular_file_if_exists, write_utf8_atomic};
 use super::images::resize_images;
 use super::ipc::{
     LogLevel, PipelineEvent, PipelineStage, PipelineSummary, ProcessingOptions, RunStatus,
     TicketStatus,
 };
 use super::pdf::convert_pdfs;
+use super::report::{build_ticket_report, render_aggregate_report, ReportAsset, TicketReport};
 use super::types::{CollectionOutcome, NoticeLevel, PipelineNotice, ProcessingOutcome};
 use super::videos::{resize_videos, MediaToolRunner};
+
+const AGGREGATE_REPORT_NAME: &str = "1. report.csv";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PipelinePlan {
@@ -52,6 +56,11 @@ pub fn run_pipeline(
         format!("Input: {}", plan.input.display()),
         Some(&plan.input),
     );
+
+    let aggregate_report_path = plan.output.join(AGGREGATE_REPORT_NAME);
+    let _ = fs::create_dir_all(&plan.output)
+        .and_then(|()| remove_regular_file_if_exists(&aggregate_report_path).map(|_| ()));
+    let mut ticket_reports = Vec::new();
     emit_log(
         events,
         None,
@@ -100,9 +109,40 @@ pub fn run_pipeline(
         summary.failed_files += result.failed_files;
         summary.warnings += result.warnings;
         summary.errors += result.errors;
+        if let Some(report) = result.report {
+            ticket_reports.push(report);
+        }
     }
 
-    summary.status = if total_tickets > 0 && summary.successful_tickets == total_tickets {
+    let aggregate_report = render_aggregate_report(&ticket_reports);
+    let aggregate_error = match write_utf8_atomic(&aggregate_report_path, &aggregate_report) {
+        Ok(()) => {
+            emit_log(
+                events,
+                None,
+                LogLevel::Success,
+                "Aggregate report created".to_owned(),
+                Some(&aggregate_report_path),
+            );
+            None
+        }
+        Err(error) => Some(error),
+    };
+    if let Some(error) = aggregate_error {
+        summary.errors += 1;
+        emit_log(
+            events,
+            None,
+            LogLevel::Error,
+            format!("Aggregate report creation failed: {error}"),
+            Some(&aggregate_report_path),
+        );
+    }
+
+    summary.status = if total_tickets > 0
+        && summary.successful_tickets == total_tickets
+        && summary.errors == 0
+    {
         RunStatus::Success
     } else if summary.successful_tickets + summary.partial_tickets > 0 {
         RunStatus::PartialSuccess
@@ -125,6 +165,7 @@ struct TicketResult {
     warnings: usize,
     errors: usize,
     report_written: bool,
+    report: Option<TicketReport>,
 }
 
 impl Default for TicketResult {
@@ -137,6 +178,7 @@ impl Default for TicketResult {
             warnings: 0,
             errors: 0,
             report_written: false,
+            report: None,
         }
     }
 }
@@ -205,24 +247,24 @@ fn process_ticket(
     }
 
     stage(events, &ticket_name, PipelineStage::Copy);
-    let mut copied_sources = Vec::new();
+    let mut report_assets = Vec::new();
     for source in discovery.folders {
         ticket_log(
             events,
             &ticket_name,
             &mut result,
             LogLevel::Info,
-            format!("Traversing source: {}", source.display()),
-            Some(&source),
+            format!("Traversing source: {}", source.path.display()),
+            Some(&source.path),
         );
         match collect_from_source(&source, &ticket_output) {
-            Ok(outcome) => absorb_collection(
-                events,
-                &ticket_name,
-                &mut result,
-                &mut copied_sources,
-                outcome,
-            ),
+            Ok(outcome) => {
+                report_assets.extend(outcome.copied.iter().map(|asset| ReportAsset {
+                    source_root: source.path.clone(),
+                    relative_source: asset.relative_source.clone(),
+                }));
+                absorb_collection(events, &ticket_name, &mut result, outcome);
+            }
             Err(error) => {
                 result.failed_files += 1;
                 ticket_log(
@@ -231,7 +273,7 @@ fn process_ticket(
                     &mut result,
                     LogLevel::Error,
                     format!("Source collection failed: {error}"),
-                    Some(&source),
+                    Some(&source.path),
                 );
             }
         }
@@ -351,18 +393,9 @@ fn process_ticket(
     }
 
     stage(events, &ticket_name, PipelineStage::Report);
-    let report_path = ticket_output.join("report.txt");
-    let report = copied_sources
-        .iter()
-        .map(|path: &PathBuf| path.to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let report = if report.is_empty() {
-        report
-    } else {
-        format!("{report}\n")
-    };
-    match fs::write(&report_path, report) {
+    let report_path = ticket_output.join("report.csv");
+    let report = build_ticket_report(&ticket_name, &report_assets);
+    match fs::write(&report_path, report.render()) {
         Ok(()) => {
             result.report_written = true;
             ticket_log(
@@ -385,6 +418,7 @@ fn process_ticket(
             );
         }
     }
+    result.report = Some(report);
 
     finish_ticket(events, ticket_name, result, started.elapsed())
 }
@@ -393,12 +427,10 @@ fn absorb_collection(
     events: &impl PipelineEventSink,
     ticket: &str,
     result: &mut TicketResult,
-    copied_sources: &mut Vec<PathBuf>,
     outcome: CollectionOutcome,
 ) {
     result.copied_files += outcome.copied.len();
     result.failed_files += outcome.failed_files;
-    copied_sources.extend(outcome.copied.into_iter().map(|asset| asset.source));
     absorb_notices(events, ticket, result, outcome.notices);
 }
 

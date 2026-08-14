@@ -45,6 +45,34 @@ cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-f
   with all three enabled by default.
 - Keep output flat and isolated per ticket; do not change collision naming or
   report scope without an explicit requirement.
+- Under `Master Files`, exclude the immediate child `Video` category and all
+  version-like descendants. Under `Deliverables`, traverse ordinary sibling
+  folders and enter only the highest numbered sibling version; once selected,
+  traverse all descendants without another version comparison.
+- Preserve the per-ticket `report.csv` contract: `Name,Ticket,Folder,Size`, with
+  `Folder` taken from the immediate child below the source root. Canonicalize
+  filename duration as `<number> sec` and geometry with ASCII `x` and no
+  surrounding spaces. Accept an optional `px` suffix and omit it from output;
+  no other measurement unit is supported. When both are present, write duration
+  first, then one space, then geometry; use `Unknown` when neither is present.
+- Preserve the output-root aggregate named exactly `1. report.csv`. It uses the
+  per-ticket CSV header once and contains every ticket-report row from the
+  current run in ticket-processing order. Always write it, using a header-only
+  aggregate when no ticket contributes rows, including when tickets have no
+  discovered source. Do not remove or rename the per-ticket `report.csv` files.
+- Derive `Name` from the source basename: remove the full parsed size span from
+  the stem, trim adjacent hyphens, underscores, and whitespace, join two
+  retained sides with one hyphen, and append the original extension. Preserve
+  other case, spaces, and punctuation. Keep the original basename if removal
+  would empty the stem; the first grouped representative supplies the displayed
+  name.
+- Group report creatives by source root, exact folder, normalized cleaned
+  project path, and normalized cleaned `Name`. Normalization is for grouping
+  only. Deduplicate canonical sizes in first-seen order, retain `Unknown`, and
+  join multiple sizes with a comma and no space, applying normal CSV quoting.
+  Omit copied files directly in a source root, and write a header-only
+  per-ticket report when a discovered source has nothing reportable; write no
+  per-ticket `report.csv` when no source is discovered.
 - Keep `src-tauri/src/main.rs` thin and application setup in `lib.rs`.
 - Expose only focused, typed Tauri commands. Never grant shell, opener, or
   filesystem plugin permissions to the webview.

@@ -44,7 +44,20 @@ impl PipelineNotice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopiedAsset {
     pub source: PathBuf,
+    pub relative_source: PathBuf,
     pub destination: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceRootKind {
+    MasterFiles,
+    Deliverables,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceRoot {
+    pub path: PathBuf,
+    pub kind: SourceRootKind,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -64,7 +77,7 @@ impl CollectionOutcome {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SourceDiscovery {
-    pub folders: Vec<PathBuf>,
+    pub folders: Vec<SourceRoot>,
     pub notices: Vec<PipelineNotice>,
 }
 

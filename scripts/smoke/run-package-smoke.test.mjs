@@ -9,6 +9,10 @@ const windowsSmoke = await readFile(
   new URL("./build-and-run-windows-x64.ps1", import.meta.url),
   "utf8",
 );
+const macosSmoke = await readFile(
+  new URL("./build-and-run-macos-arm64.sh", import.meta.url),
+  "utf8",
+);
 
 test("preserves the existing Apple Silicon macOS smoke runner", () => {
   const runner = resolveSmokeRunner({ platform: "darwin", architecture: "arm64" });
@@ -66,6 +70,41 @@ test("Windows smoke creates and inspects PNG fixtures without FFmpeg PNG support
   assert.match(windowsSmoke, /\$Image\.Dispose\(\)/);
   assert.doesNotMatch(windowsSmoke, /scale=2400:1500/);
   assert.doesNotMatch(windowsSmoke, /Assert-ImageBounds -Ffprobe/);
+});
+
+test("package smokes verify exact per-ticket and aggregate CSV content", () => {
+  for (const smoke of [macosSmoke, windowsSmoke]) {
+    assert.match(smoke, /Deliverables[\\/]Creative/);
+    assert.match(smoke, /Brief\.pdf/);
+    assert.match(smoke, /Visual_2400x1500px\.png/);
+    assert.match(smoke, /Clip_0\.2s_1080x1920px\.mp4/);
+    assert.match(smoke, /report\.csv/);
+    assert.match(smoke, /Name,Ticket,Folder,Size/);
+    assert.match(smoke, /Brief\.pdf,P1,Creative,Unknown/);
+    assert.match(smoke, /Clip\.mp4,P1,Creative,0\.2 sec 1080x1920["']/);
+    assert.match(smoke, /Visual\.png,P1,Creative,2400x1500["']/);
+    assert.doesNotMatch(smoke, /["']Ticket,Folder,Size["']/);
+    assert.doesNotMatch(smoke, /report\.txt/);
+    assert.doesNotMatch(smoke, /ticket report is missing source path/);
+  }
+  assert.match(macosSmoke, /cmp -s "\$EXPECTED_REPORT" "\$REPORT"/);
+  assert.match(
+    macosSmoke,
+    /AGGREGATE_REPORT="\$OUTPUT_DIRECTORY\/1\. report\.csv"/,
+  );
+  assert.match(
+    macosSmoke,
+    /cmp -s "\$EXPECTED_REPORT" "\$AGGREGATE_REPORT"/,
+  );
+  assert.match(windowsSmoke, /\$ActualReport\.Equals\(\$ExpectedReport/);
+  assert.match(
+    windowsSmoke,
+    /\$AggregateReport = Join-Path \$OutputDirectory "1\. report\.csv"/,
+  );
+  assert.match(
+    windowsSmoke,
+    /\$ActualAggregateReport\.Equals\(\$ExpectedReport/,
+  );
 });
 
 test("rejects unsupported package-smoke platforms", () => {

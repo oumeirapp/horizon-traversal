@@ -3,7 +3,7 @@
 Horizon Traversal is a Tauri desktop application that collects approved assets from
 ticket folders and prepares them for delivery. It discovers source folders,
 copies supported files into flat per-ticket outputs, converts PDFs, resizes
-images and videos, and writes a source-path report.
+images and videos, and writes per-ticket and aggregate CSV asset reports.
 
 The application has no Python or Node.js runtime dependency. React renders the
 desktop interface, while Rust owns validation, filesystem access, processing,
@@ -23,6 +23,44 @@ The processing order is fixed and deterministic:
 PDF conversion, image resizing, and video resizing can be enabled independently
 for each run. All three optimizations are enabled by default; disabled stages
 are omitted from the visible route and leave the copied assets unchanged.
+
+## Asset selection and reports
+
+Within `Master Files`, an immediate child `Video` category is excluded, as is
+every version-like descendant. In `Deliverables`, ordinary sibling folders are
+traversed and only the highest numbered sibling version is entered. After that
+version is selected, all of its descendants are traversed without another
+version comparison.
+
+Each ticket with a discovered source folder receives `report.csv` with the
+columns `Name`, `Ticket`, `Folder`, and `Size`. The output root also receives
+the aggregate `1. report.csv`, with that header once followed by all
+ticket-report rows from the current run in ticket-processing order. This
+aggregate is always written and is header-only when no ticket contributes a
+row, including when tickets have no discovered source. The per-ticket
+`report.csv` files remain available alongside their collected assets. `Name`
+is the source basename with its original extension. Its full parsed size span
+is removed from the stem, adjacent hyphens, underscores, and whitespace are
+trimmed, and two retained sides are joined with one hyphen. Other case, spaces,
+and punctuation are preserved. If removal would empty the stem, the original
+basename is kept.
+When normalized variants are grouped, the first representative provides the
+displayed name. `Folder` is the asset's immediate child folder below its source
+root. `Size` canonicalizes supported filename metadata: durations use
+`<number> sec`, and aspect ratios or dimensions use ASCII `x` without
+surrounding spaces. A `px` suffix is optional in the filename and is omitted
+from the report; no other measurement unit is supported. When both a duration
+and geometry are present, duration is written first and the two are separated
+by one space. `Size` is `Unknown` when no supported token is present. Creative
+variants are grouped only when their source root and exact `Folder` match and
+their cleaned project path and `Name` match after case/punctuation
+normalization; this normalization affects grouping only. Project-path cleaning
+removes size-only components. Canonical sizes are deduplicated in first-seen
+order and joined with a comma and no space. `Unknown` is retained alongside
+known sizes, and a multi-value `Size` is CSV-quoted because it contains commas.
+Copied files directly in a source root are omitted. A discovered source with no
+reportable assets receives a header-only per-ticket report; a ticket with no
+source folder receives no per-ticket `report.csv`.
 
 The React webview can call only three typed Rust commands: selection
 validation, pipeline execution with a scoped event channel, and opening the

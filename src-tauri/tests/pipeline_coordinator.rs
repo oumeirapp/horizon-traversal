@@ -120,7 +120,11 @@ fn disabled_processing_stages_keep_stage_order_and_skip_all_processors() {
     let output = temp.path().join("output");
     let ticket = input.join("P1 Unoptimized");
     let source = ticket.join("Deliverables");
-    write(&source.join("document.pdf"), b"not a PDF fixture");
+    write(&source.join("Documents/document.pdf"), b"not a PDF fixture");
+    write(
+        &source.join("Documents B/document.pdf"),
+        b"second source fixture",
+    );
     write(&source.join("poster.jpg"), b"not a JPEG fixture");
     write(&source.join("clip.mp4"), b"not an MP4 fixture");
 
@@ -135,7 +139,7 @@ fn disabled_processing_stages_keep_stage_order_and_skip_all_processors() {
     let recorded = events.snapshot();
 
     assert_eq!(summary.status, RunStatus::Success);
-    assert_eq!(summary.copied_files, 3);
+    assert_eq!(summary.copied_files, 4);
     assert_eq!(summary.changed_files, 0);
     assert_eq!(summary.failed_files, 0);
     let mut expected = vec!["pipeline:start:1".to_owned()];
@@ -167,12 +171,24 @@ fn disabled_processing_stages_keep_stage_order_and_skip_all_processors() {
         b"not a PDF fixture"
     );
     assert_eq!(
+        fs::read(output.join("P1 Unoptimized/document_1.pdf")).unwrap(),
+        b"second source fixture"
+    );
+    assert_eq!(
         fs::read(output.join("P1 Unoptimized/poster.jpg")).unwrap(),
         b"not a JPEG fixture"
     );
     assert_eq!(
         fs::read(output.join("P1 Unoptimized/clip.mp4")).unwrap(),
         b"not an MP4 fixture"
+    );
+    assert_eq!(
+        fs::read_to_string(output.join("P1 Unoptimized/report.csv")).unwrap(),
+        concat!(
+            "Name,Ticket,Folder,Size\n",
+            "document.pdf,P1,Documents,Unknown\n",
+            "document.pdf,P1,Documents B,Unknown\n",
+        )
     );
 }
 
@@ -183,10 +199,11 @@ fn multi_ticket_run_orders_events_and_keeps_reports_ticket_local() {
     let output = temp.path().join("output");
     let first = input.join("P1 First");
     let second = input.join("P2 Second");
-    let first_asset = first.join("Deliverables/nested/first.gif");
-    let second_asset = second.join("Master Files/second.gif");
+    let first_asset = first.join("Deliverables/nested/first_210x297.gif");
+    let second_asset = second.join("Master Files/Print/second.gif");
     write(&first_asset, b"first fixture");
     write(&second_asset, b"second fixture");
+    write(&output.join("1. report.csv"), b"stale aggregate");
 
     let events = RecordingEvents::default();
     let summary = run(plan(input, output.clone(), vec![first, second]), &events);
@@ -205,15 +222,21 @@ fn multi_ticket_run_orders_events_and_keeps_reports_ticket_local() {
     expected.push("pipeline:complete:success".to_owned());
     assert_eq!(structural_events(&recorded), expected);
 
-    let first_source = fs::canonicalize(first_asset).unwrap();
-    let second_source = fs::canonicalize(second_asset).unwrap();
     assert_eq!(
-        fs::read_to_string(output.join("P1 First/report.txt")).unwrap(),
-        format!("{}\n", first_source.display())
+        fs::read_to_string(output.join("P1 First/report.csv")).unwrap(),
+        "Name,Ticket,Folder,Size\nfirst.gif,P1,nested,210x297\n"
     );
     assert_eq!(
-        fs::read_to_string(output.join("P2 Second/report.txt")).unwrap(),
-        format!("{}\n", second_source.display())
+        fs::read_to_string(output.join("P2 Second/report.csv")).unwrap(),
+        "Name,Ticket,Folder,Size\nsecond.gif,P2,Print,Unknown\n"
+    );
+    assert_eq!(
+        fs::read_to_string(output.join("1. report.csv")).unwrap(),
+        concat!(
+            "Name,Ticket,Folder,Size\n",
+            "first.gif,P1,nested,210x297\n",
+            "second.gif,P2,Print,Unknown\n",
+        )
     );
 
     let completed_summary = recorded
@@ -224,6 +247,123 @@ fn multi_ticket_run_orders_events_and_keeps_reports_ticket_local() {
         })
         .unwrap();
     assert_eq!(completed_summary, &summary);
+}
+
+#[test]
+fn aggregate_report_contains_only_tickets_selected_for_the_current_run() {
+    let temp = tempdir().unwrap();
+    let input = temp.path().join("input");
+    let output = temp.path().join("output");
+    let first = input.join("P1 First");
+    let second = input.join("P2 Second");
+    write(
+        &first.join("Deliverables/Print/First_210x297.gif"),
+        b"first",
+    );
+    write(
+        &second.join("Deliverables/Print/Second_300x400.gif"),
+        b"second",
+    );
+
+    run(
+        plan(
+            input.clone(),
+            output.clone(),
+            vec![first.clone(), second.clone()],
+        ),
+        &RecordingEvents::default(),
+    );
+    let summary = run(
+        plan(input, output.clone(), vec![second]),
+        &RecordingEvents::default(),
+    );
+
+    assert_eq!(summary.status, RunStatus::Success);
+    assert!(output.join("P1 First/report.csv").is_file());
+    assert_eq!(
+        fs::read_to_string(output.join("1. report.csv")).unwrap(),
+        "Name,Ticket,Folder,Size\nSecond.gif,P2,Print,300x400\n"
+    );
+}
+
+#[test]
+fn reports_creative_sizes_and_excludes_master_video_and_versions() {
+    let temp = tempdir().unwrap();
+    let input = temp.path().join("TeamX");
+    let output = temp.path().join("output");
+    let print_ticket = input.join("P132189");
+    let video_ticket = input.join("P132446");
+
+    write(
+        &print_ticket.join(
+            "06. Deliverables/Print/Ver2/Print_260706_P132189_Q3 26 Fleet Publication Print - Fleet World_210x297_V2R0.jpg",
+        ),
+        b"print fixture",
+    );
+    write(
+        &video_ticket
+            .join("02. Master Files/Video/08072026/CLA-C174-Fast-Charging/4x5/Master-20s_4-5.mp4"),
+        b"excluded master video",
+    );
+    write(
+        &video_ticket.join("02. Master Files/Print/Version 3/excluded_210x297.jpg"),
+        b"excluded master version",
+    );
+    write(
+        &video_ticket.join(
+            "06. Deliverables/Video/08072026/140 Years Sources/CLA-C174-Fast-Charging/4x5/C.B.GB.140Y_VOD_Moment-CLA-C174-Fast-Charging-20s_4-5_HQMaster_NO-VO_H264.mp4",
+        ),
+        b"four by five",
+    );
+    write(
+        &video_ticket.join(
+            "06. Deliverables/Video/08072026/140 Years Sources/CLA-C174-Fast-Charging/9x16/C.B.GB.140Y_VOD_Moment-CLA-C174-Fast-Charging-20s_9-16_HQMaster_NO-VO_H264.mp4",
+        ),
+        b"nine by sixteen",
+    );
+    write(
+        &video_ticket.join("06. Deliverables/Video/Ver1/old_10s_1-1.mp4"),
+        b"old deliverable",
+    );
+    write(
+        &video_ticket.join(
+            "06. Deliverables/Video/Ver2/Video_260713_P132446_(3 JUL) 2026_MBPC_140YOI_Slide 3_E-class_15sec_Video_1440x1800px_V2R0.mp4",
+        ),
+        b"latest deliverable",
+    );
+
+    let mut pipeline_plan = plan(input, output.clone(), vec![print_ticket, video_ticket]);
+    pipeline_plan.processing_options = ProcessingOptions {
+        pdf: false,
+        images: false,
+        video: false,
+    };
+    let events = RecordingEvents::default();
+    let summary = run_pipeline(pipeline_plan, None, &UnexpectedMediaTools, &events);
+
+    assert_eq!(summary.status, RunStatus::Success);
+    assert_eq!(summary.copied_files, 4);
+    assert_eq!(
+        fs::read_to_string(output.join("P132189/report.csv")).unwrap(),
+        concat!(
+            "Name,Ticket,Folder,Size\n",
+            "Print_260706_P132189_Q3 26 Fleet Publication Print - Fleet World-V2R0.jpg,",
+            "P132189,Print,210x297\n",
+        )
+    );
+    assert_eq!(
+        fs::read_to_string(output.join("P132446/report.csv")).unwrap(),
+        concat!(
+            "Name,Ticket,Folder,Size\n",
+            "C.B.GB.140Y_VOD_Moment-CLA-C174-Fast-Charging-HQMaster_NO-VO_H264.mp4,",
+            "P132446,Video,\"20 sec 4x5,20 sec 9x16\"\n",
+            "Video_260713_P132446_(3 JUL) 2026_MBPC_140YOI_Slide 3_E-class-V2R0.mp4,",
+            "P132446,Video,15 sec 1440x1800\n",
+        )
+    );
+    assert!(!output.join("P132446/Master-20s_4-5.mp4").exists());
+    assert!(!output.join("P132446/excluded_210x297.jpg").exists());
+    assert!(!output.join("P132446/old_10s_1-1.mp4").exists());
 }
 
 #[test]
@@ -262,14 +402,37 @@ fn warning_only_ticket_and_run_are_successful() {
     expected.push("pipeline:complete:success".to_owned());
     assert_eq!(structural_events(&recorded), expected);
 
-    assert!(!output.join("P1 Missing Sources/report.txt").exists());
-    assert!(output.join("P2 Ready/report.txt").is_file());
+    assert!(!output.join("P1 Missing Sources/report.csv").exists());
+    assert!(output.join("P2 Ready/report.csv").is_file());
     assert_eq!(
-        fs::read_to_string(output.join("P2 Ready/report.txt")).unwrap(),
-        format!(
-            "{}\n",
-            fs::canonicalize(successful_asset).unwrap().display()
-        )
+        fs::read_to_string(output.join("P2 Ready/report.csv")).unwrap(),
+        "Name,Ticket,Folder,Size\n"
+    );
+    assert_eq!(
+        fs::read_to_string(output.join("1. report.csv")).unwrap(),
+        "Name,Ticket,Folder,Size\n"
+    );
+}
+
+#[test]
+fn aggregate_is_header_only_when_no_ticket_has_a_source_folder() {
+    let temp = tempdir().unwrap();
+    let input = temp.path().join("input");
+    let output = temp.path().join("output");
+    let ticket = input.join("P1 Missing Sources");
+    fs::create_dir_all(&ticket).unwrap();
+    write(&output.join("1. report.csv"), b"stale row");
+
+    let summary = run(
+        plan(input, output.clone(), vec![ticket]),
+        &RecordingEvents::default(),
+    );
+
+    assert_eq!(summary.status, RunStatus::Success);
+    assert!(!output.join("P1 Missing Sources/report.csv").exists());
+    assert_eq!(
+        fs::read_to_string(output.join("1. report.csv")).unwrap(),
+        "Name,Ticket,Folder,Size\n"
     );
 }
 
@@ -306,4 +469,42 @@ fn ticket_error_does_not_block_the_next_ticket_and_is_partial_success() {
     expected.extend(expected_ticket_events("P2 Ready", "success"));
     expected.push("pipeline:complete:partialSuccess".to_owned());
     assert_eq!(structural_events(&recorded), expected);
+    assert_eq!(
+        fs::read_to_string(output.join("1. report.csv")).unwrap(),
+        "Name,Ticket,Folder,Size\n"
+    );
+}
+
+#[test]
+fn aggregate_directory_collision_is_preserved_and_marks_the_run_partial() {
+    let temp = tempdir().unwrap();
+    let input = temp.path().join("input");
+    let output = temp.path().join("output");
+    let ticket = input.join("P1 Ready");
+    write(
+        &ticket.join("Deliverables/Print/Poster_210x297.gif"),
+        b"poster",
+    );
+    write(&output.join("1. report.csv/sentinel"), b"keep");
+    let events = RecordingEvents::default();
+
+    let summary = run(plan(input, output.clone(), vec![ticket]), &events);
+
+    assert_eq!(summary.status, RunStatus::PartialSuccess);
+    assert_eq!(summary.successful_tickets, 1);
+    assert_eq!(summary.errors, 1);
+    assert_eq!(
+        fs::read(output.join("1. report.csv/sentinel")).unwrap(),
+        b"keep"
+    );
+    assert!(output.join("P1 Ready/report.csv").is_file());
+    assert!(events.snapshot().iter().any(|event| matches!(
+        event,
+        PipelineEvent::Log {
+            ticket: None,
+            level: LogLevel::Error,
+            message,
+            ..
+        } if message.contains("Aggregate report creation failed")
+    )));
 }
