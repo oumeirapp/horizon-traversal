@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -248,11 +249,28 @@ def test_raw_video_bytes_relationships_timing_and_report_are_preserved(
             for item in content_types.getElementsByTagName("Default")
         )
 
+    # The shared validator opens XML in text mode. Make its declared UTF-8
+    # content independent of Windows' legacy process code page.
     validation = subprocess.run(
-        [sys.executable, str(VALIDATOR), str(tmp_path / "built.pptx"), "--original", str(TEMPLATE)],
+        [
+            sys.executable,
+            "-X",
+            "utf8=1",
+            str(VALIDATOR),
+            str(tmp_path / "built.pptx"),
+            "--original",
+            str(TEMPLATE),
+        ],
         check=False,
         capture_output=True,
-        text=True,
+        env={
+            **os.environ,
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PYTHONCOERCECLOCALE": "0",
+            "PYTHONIOENCODING": "utf-8",
+        },
+        encoding="utf-8",
     )
     assert validation.returncode == 0, validation.stdout + validation.stderr
     assert "All validations PASSED" in validation.stdout
