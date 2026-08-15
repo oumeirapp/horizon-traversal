@@ -166,8 +166,16 @@ test("Tauri platform merge retains shared resources and adds Windows PDFium", as
   assert.deepEqual(base.bundle.externalBin, [
     "binaries/ffmpeg",
     "binaries/ffprobe",
+    "binaries/powerpoint-sidecar",
   ]);
   assert.deepEqual(base.bundle.resources, {
+    "../powerpoint-sidecar/resources/Slide template.pptx":
+      "powerpoint/Slide template.pptx",
+    "../powerpoint-sidecar/THIRD_PARTY_NOTICES.md":
+      "powerpoint/THIRD_PARTY_NOTICES.md",
+    "../powerpoint-sidecar/requirements-bundle.txt":
+      "powerpoint/requirements-bundle.txt",
+    "../powerpoint-sidecar/licenses": "powerpoint/licenses",
     "native-assets.json": "native-assets.json",
     "binaries/THIRD_PARTY_NOTICES.md":
       "binaries/THIRD_PARTY_NOTICES.md",

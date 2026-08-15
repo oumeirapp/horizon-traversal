@@ -257,6 +257,53 @@ async function sourceLayout(root, targetName, cargoTargetDirectory) {
     directories: ["licenses", ...licenseTree.directories],
     files: licenseTree.files,
   };
+  const powerpointNoticePath = resolveInside(
+    root,
+    "powerpoint-sidecar",
+    "THIRD_PARTY_NOTICES.md",
+  );
+  const powerpointInventoryPath = resolveInside(
+    root,
+    "powerpoint-sidecar",
+    "requirements-bundle.txt",
+  );
+  const powerpointLicensesDirectory = resolveInside(
+    root,
+    "powerpoint-sidecar",
+    "licenses",
+  );
+  await requireRegularFile(
+    powerpointNoticePath,
+    "PowerPoint sidecar third-party notices",
+  );
+  await requireRegularFile(
+    powerpointInventoryPath,
+    "PowerPoint sidecar dependency inventory",
+  );
+  const powerpointLicenseTree = await collectTree(
+    powerpointLicensesDirectory,
+    "powerpoint/licenses",
+  );
+  if (powerpointLicenseTree.files.length === 0) {
+    throw new Error(
+      `PowerPoint sidecar license directory is empty: ${powerpointLicensesDirectory}`,
+    );
+  }
+  const powerpoint = {
+    directories: [
+      "powerpoint",
+      "powerpoint/licenses",
+      ...powerpointLicenseTree.directories,
+    ],
+    files: [
+      "powerpoint/THIRD_PARTY_NOTICES.md",
+      "powerpoint/requirements-bundle.txt",
+      ...powerpointLicenseTree.files,
+    ],
+    inventoryPath: powerpointInventoryPath,
+    licensesDirectory: powerpointLicensesDirectory,
+    noticePath: powerpointNoticePath,
+  };
 
   return {
     artifact,
@@ -264,6 +311,7 @@ async function sourceLayout(root, targetName, cargoTargetDirectory) {
     licenses,
     licensesDirectory,
     noticePath,
+    powerpoint,
     releaseDirectory,
     target,
   };
@@ -274,13 +322,29 @@ async function copySourceLayout(layout, destination) {
     [layout.artifact.artifactPath, layout.artifact.artifactName],
     [layout.archivePath, SOURCE_ARCHIVE_NAME],
     [layout.noticePath, NOTICE_NAME],
+    [
+      layout.powerpoint.noticePath,
+      "powerpoint/THIRD_PARTY_NOTICES.md",
+    ],
+    [
+      layout.powerpoint.inventoryPath,
+      "powerpoint/requirements-bundle.txt",
+    ],
   ];
   for (const [source, relativePath] of copies) {
-    await copyFile(source, path.join(destination, relativePath), 0);
-    await chmod(path.join(destination, relativePath), 0o644);
+    const destinationFile = path.join(destination, ...relativePath.split("/"));
+    await mkdir(path.dirname(destinationFile), { recursive: true, mode: 0o755 });
+    await copyFile(source, destinationFile, 0);
+    await chmod(destinationFile, 0o644);
   }
 
   for (const relativeDirectory of layout.licenses.directories) {
+    await mkdir(path.join(destination, ...relativeDirectory.split("/")), {
+      recursive: true,
+      mode: 0o755,
+    });
+  }
+  for (const relativeDirectory of layout.powerpoint.directories) {
     await mkdir(path.join(destination, ...relativeDirectory.split("/")), {
       recursive: true,
       mode: 0o755,
@@ -290,6 +354,19 @@ async function copySourceLayout(layout, destination) {
     const sourceRelative = relativeFile.slice("licenses/".length);
     const source = path.join(
       layout.licensesDirectory,
+      ...sourceRelative.split("/"),
+    );
+    const destinationFile = path.join(destination, ...relativeFile.split("/"));
+    await copyFile(source, destinationFile, 0);
+    await chmod(destinationFile, 0o644);
+  }
+  for (const relativeFile of layout.powerpoint.files) {
+    if (!relativeFile.startsWith("powerpoint/licenses/")) {
+      continue;
+    }
+    const sourceRelative = relativeFile.slice("powerpoint/licenses/".length);
+    const source = path.join(
+      layout.powerpoint.licensesDirectory,
       ...sourceRelative.split("/"),
     );
     const destinationFile = path.join(destination, ...relativeFile.split("/"));
@@ -354,11 +431,15 @@ export async function verifyDistribution({
     SOURCE_ARCHIVE_NAME,
     NOTICE_NAME,
     ...layout.licenses.files,
+    ...layout.powerpoint.files,
   ].sort(comparePaths);
   const expectedFilesWithChecksums = [...expectedFiles, CHECKSUM_NAME].sort(
     comparePaths,
   );
-  const expectedDirectories = [...layout.licenses.directories].sort(comparePaths);
+  const expectedDirectories = [
+    ...layout.licenses.directories,
+    ...layout.powerpoint.directories,
+  ].sort(comparePaths);
   const entries = await collectTree(resolvedDirectory);
   const actualFiles = [...entries.files].sort(comparePaths);
   const actualDirectories = [...entries.directories].sort(comparePaths);
@@ -391,6 +472,26 @@ export async function verifyDistribution({
       path.join(
         layout.licensesDirectory,
         ...relativeFile.slice("licenses/".length).split("/"),
+      ),
+    );
+  }
+  trustedFiles.set(
+    "powerpoint/THIRD_PARTY_NOTICES.md",
+    layout.powerpoint.noticePath,
+  );
+  trustedFiles.set(
+    "powerpoint/requirements-bundle.txt",
+    layout.powerpoint.inventoryPath,
+  );
+  for (const relativeFile of layout.powerpoint.files) {
+    if (!relativeFile.startsWith("powerpoint/licenses/")) {
+      continue;
+    }
+    trustedFiles.set(
+      relativeFile,
+      path.join(
+        layout.powerpoint.licensesDirectory,
+        ...relativeFile.slice("powerpoint/licenses/".length).split("/"),
       ),
     );
   }
@@ -485,6 +586,7 @@ export async function assembleDistribution({
       SOURCE_ARCHIVE_NAME,
       NOTICE_NAME,
       ...layout.licenses.files,
+      ...layout.powerpoint.files,
     ];
     await writeChecksums(stagingDirectory, copiedFiles);
     await verifyDistribution({

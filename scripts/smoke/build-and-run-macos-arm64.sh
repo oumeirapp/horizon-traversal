@@ -58,13 +58,15 @@ trap 'exit 1' HUP INT TERM
 
 INPUT_DIRECTORY="$SMOKE_DIRECTORY/input"
 OUTPUT_DIRECTORY="$SMOKE_DIRECTORY/output"
-SOURCE_DIRECTORY="$INPUT_DIRECTORY/P1 Packaged Smoke/Deliverables/Creative"
+DELIVERABLES_SOURCE_DIRECTORY="$INPUT_DIRECTORY/P1 Packaged Smoke/Deliverables/Creative"
+MASTER_SOURCE_DIRECTORY="$INPUT_DIRECTORY/P1 Packaged Smoke/Master Files/Print"
 RESULT_PATH="$SMOKE_DIRECTORY/result.json"
 REQUEST_PATH="$SMOKE_DIRECTORY/request.json"
-mkdir -p "$SOURCE_DIRECTORY"
-cp "$PDF_FIXTURE" "$SOURCE_DIRECTORY/Brief.pdf"
+mkdir -p "$DELIVERABLES_SOURCE_DIRECTORY" "$MASTER_SOURCE_DIRECTORY"
+cp "$PDF_FIXTURE" "$DELIVERABLES_SOURCE_DIRECTORY/Brief.pdf"
+cp "$PDF_FIXTURE" "$MASTER_SOURCE_DIRECTORY/MasterBrief.pdf"
 sips --resampleHeightWidth 1500 2400 "$IMAGE_FIXTURE" \
-  --out "$SOURCE_DIRECTORY/Visual_2400x1500px.png" >/dev/null
+  --out "$DELIVERABLES_SOURCE_DIRECTORY/Visual_2400x1500px.png" >/dev/null
 
 "$FFMPEG" \
   -hide_banner -loglevel error -y \
@@ -73,7 +75,7 @@ sips --resampleHeightWidth 1500 2400 "$IMAGE_FIXTURE" \
   -t 0.2 -shortest \
   -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
   -c:a pcm_s16le \
-  "$SOURCE_DIRECTORY/Clip_0.2s_1080x1920px.mp4"
+  "$DELIVERABLES_SOURCE_DIRECTORY/Clip_0.2s_1080x1920px.mp4"
 
 plutil -create xml1 "$REQUEST_PATH"
 plutil -insert inputPath -string "$INPUT_DIRECTORY" "$REQUEST_PATH"
@@ -100,14 +102,21 @@ codesign --force --deep --sign - --timestamp=none "$APP_BUNDLE"
 "$RUNNER" "$APP_BUNDLE" "$REQUEST_PATH"
 
 TICKET_OUTPUT="$OUTPUT_DIRECTORY/P1 Packaged Smoke"
+MASTER_OUTPUT="$TICKET_OUTPUT/Master"
+DELIVERABLES_OUTPUT="$TICKET_OUTPUT/Deliverables"
 REPORT="$TICKET_OUTPUT/report.csv"
 AGGREGATE_REPORT="$OUTPUT_DIRECTORY/1. report.csv"
-require_file "$TICKET_OUTPUT/Brief.png"
-require_file "$TICKET_OUTPUT/Visual_2400x1500px.png"
-require_file "$TICKET_OUTPUT/Clip_0.2s_1080x1920px.mp4"
+[ -d "$MASTER_OUTPUT" ] || fail "Master output category is missing"
+[ -d "$DELIVERABLES_OUTPUT" ] || fail "Deliverables output category is missing"
+require_file "$MASTER_OUTPUT/MasterBrief.png"
+require_file "$DELIVERABLES_OUTPUT/Brief.png"
+require_file "$DELIVERABLES_OUTPUT/Visual_2400x1500px.png"
+require_file "$DELIVERABLES_OUTPUT/Clip_0.2s_1080x1920px.mp4"
 require_file "$REPORT"
 require_file "$AGGREGATE_REPORT"
-[ ! -e "$TICKET_OUTPUT/Brief.pdf" ] || fail "PDF original remains after successful conversion"
+[ ! -e "$MASTER_OUTPUT/MasterBrief.pdf" ] || fail "Master PDF original remains after successful conversion"
+[ ! -e "$DELIVERABLES_OUTPUT/Brief.pdf" ] || fail "Deliverables PDF original remains after successful conversion"
+[ ! -e "$TICKET_OUTPUT/Brief.png" ] || fail "asset was written outside its output category"
 
 OUTCOME=$(plutil -extract outcome raw -o - "$RESULT_PATH")
 STATUS=$(plutil -extract summary.status raw -o - "$RESULT_PATH")
@@ -115,10 +124,13 @@ COPIED=$(plutil -extract summary.copiedFiles raw -o - "$RESULT_PATH")
 ERRORS=$(plutil -extract summary.errors raw -o - "$RESULT_PATH")
 [ "$OUTCOME" = "passed" ] || fail "unexpected smoke outcome: $OUTCOME"
 [ "$STATUS" = "success" ] || fail "unexpected pipeline status: $STATUS"
-[ "$COPIED" = "3" ] || fail "expected three copied assets, received $COPIED"
+[ "$COPIED" = "4" ] || fail "expected four copied assets, received $COPIED"
 [ "$ERRORS" = "0" ] || fail "expected zero pipeline errors, received $ERRORS"
 
-for image in "$TICKET_OUTPUT/Brief.png" "$TICKET_OUTPUT/Visual_2400x1500px.png"; do
+for image in \
+  "$MASTER_OUTPUT/MasterBrief.png" \
+  "$DELIVERABLES_OUTPUT/Brief.png" \
+  "$DELIVERABLES_OUTPUT/Visual_2400x1500px.png"; do
   width=$(sips -g pixelWidth "$image" | awk '/pixelWidth:/ { print $2 }')
   height=$(sips -g pixelHeight "$image" | awk '/pixelHeight:/ { print $2 }')
   [ -n "$width" ] && [ -n "$height" ] || fail "cannot read image dimensions: $image"
@@ -129,13 +141,13 @@ done
 VIDEO_STREAM=$("$FFPROBE" \
   -v error -select_streams v:0 \
   -show_entries stream=codec_name,width,height,pix_fmt -of csv=p=0 \
-  "$TICKET_OUTPUT/Clip_0.2s_1080x1920px.mp4")
+  "$DELIVERABLES_OUTPUT/Clip_0.2s_1080x1920px.mp4")
 [ "$VIDEO_STREAM" = "h264,720,1280,yuv420p" ] ||
   fail "expected H.264 720x1280 yuv420p video, received $VIDEO_STREAM"
 AUDIO_STREAM=$("$FFPROBE" \
   -v error -select_streams a:0 \
   -show_entries stream=codec_name -of csv=p=0 \
-  "$TICKET_OUTPUT/Clip_0.2s_1080x1920px.mp4")
+  "$DELIVERABLES_OUTPUT/Clip_0.2s_1080x1920px.mp4")
 [ "$AUDIO_STREAM" = "aac" ] ||
   fail "expected AAC output from the PCM input, received $AUDIO_STREAM"
 
@@ -144,7 +156,8 @@ printf '%s\n' \
   'Name,Ticket,Folder,Size' \
   'Brief.pdf,P1,Creative,Unknown' \
   'Clip.mp4,P1,Creative,0.2 sec 1080x1920' \
-  'Visual.png,P1,Creative,2400x1500' > "$EXPECTED_REPORT"
+  'Visual.png,P1,Creative,2400x1500' \
+  'MasterBrief.pdf,P1,Print,Unknown' > "$EXPECTED_REPORT"
 cmp -s "$EXPECTED_REPORT" "$REPORT" ||
   fail "ticket CSV does not match the exact Name-first header and filename-ordered rows"
 cmp -s "$EXPECTED_REPORT" "$AGGREGATE_REPORT" ||

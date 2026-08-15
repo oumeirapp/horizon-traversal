@@ -126,6 +126,15 @@ function verifyVersion(program, binary, entry) {
   return output;
 }
 
+function verifyPowerPointSidecarVersion(binary, entry) {
+  const output = run(binary, ["--version"]).trim();
+  if (output !== entry.version) {
+    fail(
+      `powerpoint-sidecar reported version ${JSON.stringify(output)}; expected ${entry.version}`,
+    );
+  }
+}
+
 function verifyEncoders(binary, requiredEncoders) {
   const output = run(binary, ["-hide_banner", "-encoders"]);
   const encoderNames = new Set(
@@ -192,6 +201,54 @@ async function listFiles(directory) {
   return result;
 }
 
+async function verifyHashedTree(entry, label) {
+  const absolutePath = path.resolve(ROOT, entry.path);
+  const relativeRoot = path.relative(ROOT, absolutePath);
+  if (relativeRoot.startsWith("..") || path.isAbsolute(relativeRoot)) {
+    fail(`${label} escapes the repository: ${entry.path}`);
+  }
+
+  let metadata;
+  try {
+    metadata = await lstat(absolutePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      fail(`${label} is missing: ${entry.path}`);
+    }
+    throw error;
+  }
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    fail(`${label} must be a regular, non-symlink directory: ${entry.path}`);
+  }
+
+  const files = (await listFiles(absolutePath)).sort();
+  if (!Number.isSafeInteger(entry.fileCount) || entry.fileCount <= 0) {
+    fail(`${label} must declare a positive file count`);
+  }
+  if (files.length !== entry.fileCount) {
+    fail(
+      `${label} contains ${files.length} files; expected ${entry.fileCount}`,
+    );
+  }
+
+  const treeHash = createHash("sha256");
+  for (const file of files) {
+    const relativePath = path
+      .relative(absolutePath, file)
+      .split(path.sep)
+      .join("/");
+    treeHash.update(`${await sha256(file)}  ${relativePath}\n`);
+  }
+  const actualDigest = treeHash.digest("hex");
+  assertSha256(entry.sha256, `${label} manifest hash`);
+  if (actualDigest !== entry.sha256) {
+    fail(
+      `${label} checksum mismatch: expected ${entry.sha256}, received ${actualDigest}`,
+    );
+  }
+  return { path: absolutePath, sha256: actualDigest, fileCount: files.length };
+}
+
 async function verifyDistributionFiles(entries, hostTriple) {
   const seen = new Set();
   for (const entry of entries) {
@@ -238,13 +295,23 @@ async function verifyDistributionFiles(entries, hostTriple) {
   }
 }
 
-async function verifyTauriConfiguration(hostTriple, manifestTarget) {
+async function verifyTauriConfiguration(
+  hostTriple,
+  manifestTarget,
+  powerpointSource,
+) {
   const configurationPath = path.join(ROOT, "src-tauri", "tauri.conf.json");
   const configuration = JSON.parse(await readFile(configurationPath, "utf8"));
   const externalBin = [...(configuration.bundle?.externalBin ?? [])].sort();
-  const expectedExternalBin = ["binaries/ffmpeg", "binaries/ffprobe"];
+  const expectedExternalBin = [
+    "binaries/ffmpeg",
+    "binaries/ffprobe",
+    "binaries/powerpoint-sidecar",
+  ];
   if (JSON.stringify(externalBin) !== JSON.stringify(expectedExternalBin)) {
-    fail("tauri.conf.json must bundle only the suffix-free FFmpeg and FFprobe paths");
+    fail(
+      "tauri.conf.json must bundle only the suffix-free FFmpeg, FFprobe, and PowerPoint sidecar paths",
+    );
   }
 
   const resources = configuration.bundle?.resources ?? [];
@@ -263,6 +330,22 @@ async function verifyTauriConfiguration(hostTriple, manifestTarget) {
   }
   if (!configuredResources.some((resource) => resource.startsWith("resources/licenses/pdfium"))) {
     fail("tauri.conf.json does not bundle the PDFium license tree");
+  }
+  if (Array.isArray(resources)) {
+    fail("tauri.conf.json must map PowerPoint resources to fixed bundle paths");
+  }
+  for (const resource of [
+    powerpointSource.template,
+    powerpointSource.notices,
+    powerpointSource.dependencyInventory,
+    powerpointSource.licenses,
+  ]) {
+    const configurationSource = `../${resource.path}`;
+    if (resources[configurationSource] !== resource.bundlePath) {
+      fail(
+        `tauri.conf.json must bundle verified PowerPoint resource ${resource.path} at ${resource.bundlePath}`,
+      );
+    }
   }
 
   if (hostTriple.endsWith("apple-darwin")) {
@@ -323,6 +406,46 @@ async function verifyPreparationScripts(manifest, hostTriple, target) {
     if (!pdfiumScript.includes(value)) {
       fail(`scripts/prepare-pdfium.mjs does not contain pinned manifest value ${value}`);
     }
+  }
+
+  const powerpointSource = manifest.sources.powerpointSidecar;
+  const powerpointScriptPath = path.join(
+    ROOT,
+    "scripts",
+    "prepare-powerpoint-sidecar.mjs",
+  );
+  const powerpointScript = await readFile(powerpointScriptPath, "utf8");
+  for (const value of [
+    "native-assets.json",
+    "source.specPath",
+    "source.requirementsPath",
+    "--only-binary=:all:",
+    "--require-hashes",
+    "--version",
+  ]) {
+    if (!powerpointScript.includes(value)) {
+      fail(
+        `scripts/prepare-powerpoint-sidecar.mjs is missing required build contract ${value}`,
+      );
+    }
+  }
+  const requirements = await readFile(
+    path.resolve(ROOT, powerpointSource.requirementsPath),
+    "utf8",
+  );
+  if (!requirements.includes(`pyinstaller==${powerpointSource.pyinstallerVersion}`)) {
+    fail(
+      `PowerPoint sidecar requirements do not pin PyInstaller ${powerpointSource.pyinstallerVersion}`,
+    );
+  }
+  const packageSource = await readFile(
+    path.join(ROOT, "powerpoint-sidecar", "src", "horizon_pptx", "__init__.py"),
+    "utf8",
+  );
+  if (!packageSource.includes(`__version__ = "${powerpointSource.version}"`)) {
+    fail(
+      `PowerPoint sidecar source does not declare version ${powerpointSource.version}`,
+    );
   }
 }
 
@@ -401,6 +524,12 @@ async function main() {
     if (declaredTarget.pdfium.version !== declaredWheel.pdfiumVersion) {
       fail(`${targetTriple} PDFium binary version does not match its wheel pin`);
     }
+    if (
+      declaredTarget.powerpointSidecar?.version !==
+      manifest.sources.powerpointSidecar?.version
+    ) {
+      fail(`${targetTriple} PowerPoint sidecar version does not match its source pin`);
+    }
     assertTargetOutputPins(targetTriple, declaredTarget);
     if (
       typeof declaredTarget.mediaBuild?.compiler !== "string" ||
@@ -410,6 +539,11 @@ async function main() {
     }
     verifyProgramPath("ffmpeg", declaredTarget.ffmpeg, targetTriple);
     verifyProgramPath("ffprobe", declaredTarget.ffprobe, targetTriple);
+    verifyProgramPath(
+      "powerpoint-sidecar",
+      declaredTarget.powerpointSidecar,
+      targetTriple,
+    );
   }
   for (const targetTriple of Object.keys(manifest.targets ?? {})) {
     if (!pinnedTargets.has(targetTriple)) {
@@ -441,6 +575,31 @@ async function main() {
   if (target.pdfium.version !== pdfiumWheel.pdfiumVersion) {
     fail("PDFium binary version and wheel version do not match in native-assets.json");
   }
+  const powerpointSource = manifest.sources.powerpointSidecar;
+  if (
+    !powerpointSource ||
+    target.powerpointSidecar?.version !== powerpointSource.version
+  ) {
+    fail(
+      "PowerPoint sidecar binary version and source version do not match in native-assets.json",
+    );
+  }
+  assertSha256(
+    powerpointSource.template?.sha256,
+    "PowerPoint slide template hash",
+  );
+  assertSha256(
+    powerpointSource.notices?.sha256,
+    "PowerPoint sidecar notices hash",
+  );
+  assertSha256(
+    powerpointSource.dependencyInventory?.sha256,
+    "PowerPoint sidecar dependency inventory hash",
+  );
+  assertSha256(
+    powerpointSource.licenses?.sha256,
+    "PowerPoint sidecar license tree hash",
+  );
   assertSha256(manifest.sources.ffmpeg.sha256, "FFmpeg source hash");
   assertSha256(manifest.sources.x264.sha256, "x264 source hash");
   for (const [targetTriple, wheel] of Object.entries(manifest.sources.pdfiumWheels)) {
@@ -465,6 +624,7 @@ async function main() {
   if (
     target.ffmpeg.executable !== true ||
     target.ffprobe.executable !== true ||
+    target.powerpointSidecar.executable !== true ||
     target.pdfium.executable !== false
   ) {
     fail("native-assets.json has invalid executable flags for bundled native tools");
@@ -472,6 +632,11 @@ async function main() {
 
   verifyProgramPath("ffmpeg", target.ffmpeg, hostTriple);
   verifyProgramPath("ffprobe", target.ffprobe, hostTriple);
+  verifyProgramPath(
+    "powerpoint-sidecar",
+    target.powerpointSidecar,
+    hostTriple,
+  );
   const expectedPdfiumName =
     target.platform === "darwin"
       ? "libpdfium.dylib"
@@ -497,12 +662,39 @@ async function main() {
     hostTriple,
     verifySha256: true,
   });
+  const powerpointInspection = await verifyFile(target.powerpointSidecar, {
+    executable: true,
+    hostTriple,
+  });
+  await verifyFile(powerpointSource.template, {
+    executable: false,
+    hostTriple,
+    verifySha256: true,
+  });
+  await verifyFile(powerpointSource.notices, {
+    executable: false,
+    hostTriple,
+    verifySha256: true,
+  });
+  await verifyFile(powerpointSource.dependencyInventory, {
+    executable: false,
+    hostTriple,
+    verifySha256: true,
+  });
+  await verifyHashedTree(
+    powerpointSource.licenses,
+    "PowerPoint sidecar license tree",
+  );
   const ffmpeg = ffmpegInspection.path;
   const ffprobe = ffprobeInspection.path;
   const pdfium = pdfiumInspection.path;
+  const powerpointSidecar = powerpointInspection.path;
 
   console.log(`ffmpeg SHA-256 (report only): ${ffmpegInspection.sha256}`);
   console.log(`ffprobe SHA-256 (report only): ${ffprobeInspection.sha256}`);
+  console.log(
+    `PowerPoint sidecar SHA-256 (report only): ${powerpointInspection.sha256}`,
+  );
 
   if (target.platform === "windows") {
     const dependencyPolicy = target.dynamicDependencies;
@@ -518,6 +710,14 @@ async function main() {
       );
       console.log(`${label} PE imports: ${inspection.imports.join(", ") || "(none)"}`);
     }
+    const powerpointInspection = assertAmd64Pe(
+      await readFile(powerpointSidecar),
+      target.powerpointSidecar.dynamicDependencies,
+      "powerpoint-sidecar",
+    );
+    console.log(
+      `powerpoint-sidecar PE imports: ${powerpointInspection.imports.join(", ") || "(none)"}`,
+    );
   }
 
   const ffmpegVersion = verifyVersion("ffmpeg", ffmpeg, target.ffmpeg);
@@ -535,23 +735,28 @@ async function main() {
     }
   }
   verifyEncoders(ffmpeg, target.ffmpeg.requiredEncoders);
+  verifyPowerPointSidecarVersion(
+    powerpointSidecar,
+    target.powerpointSidecar,
+  );
 
   if (target.platform === "darwin") {
-    for (const file of [ffmpeg, ffprobe, pdfium]) {
+    for (const file of [ffmpeg, ffprobe, pdfium, powerpointSidecar]) {
       verifyMacArchitecture(file, target.architecture);
     }
     verifyMacDependencies(ffmpeg, target.dynamicDependencies);
     verifyMacDependencies(ffprobe, target.dynamicDependencies);
     verifyMacDependencies(pdfium, target.dynamicDependencies, true);
+    verifyMacDependencies(powerpointSidecar, target.dynamicDependencies);
   }
 
   await verifyDistributionFiles(manifest.distributionFiles, hostTriple);
-  await verifyTauriConfiguration(hostTriple, target);
+  await verifyTauriConfiguration(hostTriple, target, powerpointSource);
   await verifyPreparationScripts(manifest, hostTriple, target);
   await verifyWebviewBoundary();
 
   console.log(
-    `Verified ${hostTriple}: FFmpeg/FFprobe ${target.ffmpeg.version}, PDFium ${target.pdfium.version}, and ${manifest.distributionFiles.length} distribution files.`,
+    `Verified ${hostTriple}: FFmpeg/FFprobe ${target.ffmpeg.version}, PDFium ${target.pdfium.version}, PowerPoint sidecar ${target.powerpointSidecar.version}, and ${manifest.distributionFiles.length} distribution files.`,
   );
 }
 

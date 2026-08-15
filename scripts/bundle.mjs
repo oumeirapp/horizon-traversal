@@ -74,6 +74,7 @@ async function prepareNativeAssets() {
   for (const script of [
     "prepare-pdfium.mjs",
     "prepare-ffmpeg.mjs",
+    "prepare-powerpoint-sidecar.mjs",
     "verify-native-assets.mjs",
   ]) {
     await run(process.execPath, [path.join(ROOT, "scripts", script)]);

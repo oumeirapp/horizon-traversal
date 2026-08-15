@@ -15,6 +15,11 @@ export interface SelectionRequest {
   processingOptions: ProcessingOptions;
 }
 
+export interface PowerPointRequest {
+  inputPath: string;
+  outputPath: string;
+}
+
 export interface ProcessingOptions {
   pdf: boolean;
   images: boolean;
@@ -54,6 +59,62 @@ export type LogLevel = "info" | "success" | "warning" | "error";
 export type RunStatus = "success" | "partialSuccess" | "failed";
 
 export type TicketStatus = RunStatus;
+
+export type PowerPointStep =
+  | "inspect"
+  | "video"
+  | "layout"
+  | "compose"
+  | "save";
+
+export type PowerPointRunStatus = RunStatus | "cancelled";
+
+export interface PowerPointSummary {
+  status: PowerPointRunStatus;
+  totalTickets: number;
+  slidesCreated: number;
+  blankSlides: number;
+  warnings: number;
+  errors: number;
+  elapsedMs: number;
+  outputPath: string | null;
+  reportPath: string | null;
+}
+
+export type PowerPointEvent =
+  | {
+      type: "powerpointStarted";
+      runId: string;
+      totalTickets: number;
+      totalUnits: number;
+    }
+  | {
+      type: "powerpointProgress";
+      runId: string;
+      step: PowerPointStep;
+      ticket: string | null;
+      index: number | null;
+      totalTickets: number;
+      stepCompleted: number;
+      stepTotal: number;
+      completedUnits: number;
+      totalUnits: number;
+      message: string;
+    }
+  | {
+      type: "log";
+      runId: string;
+      ticket: string | null;
+      level: LogLevel;
+      message: string;
+      path: string | null;
+      timestampMs: number;
+    }
+  | {
+      type: "powerpointCompleted";
+      runId: string;
+      summary: PowerPointSummary;
+    };
 
 export interface PipelineSummary {
   status: RunStatus;
@@ -116,6 +177,12 @@ export function validateSelection(
   return invoke<SelectionSummary>("validate_selection", { request });
 }
 
+export function validatePowerPointSelection(
+  request: PowerPointRequest,
+): Promise<SelectionSummary> {
+  return invoke<SelectionSummary>("validate_powerpoint_selection", { request });
+}
+
 export function startPipeline(
   request: SelectionRequest,
   onEvent: (event: PipelineEvent) => void,
@@ -127,6 +194,27 @@ export function startPipeline(
     request,
     onEvent: channel,
   });
+}
+
+export function startPowerPoint(
+  request: PowerPointRequest,
+  onEvent: (event: PowerPointEvent) => void,
+): Promise<PowerPointSummary> {
+  const channel = new Channel<PowerPointEvent>();
+  channel.onmessage = onEvent;
+
+  return invoke<PowerPointSummary>("start_powerpoint", {
+    request,
+    onEvent: channel,
+  });
+}
+
+export function cancelPowerPoint(runId: string): Promise<void> {
+  return invoke<void>("cancel_powerpoint", { runId });
+}
+
+export function openPowerPointOutput(): Promise<void> {
+  return invoke<void>("open_powerpoint_output");
 }
 
 export function openLastOutput(): Promise<void> {

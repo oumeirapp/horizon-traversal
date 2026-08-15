@@ -29,6 +29,35 @@
         "url": "https://files.pythonhosted.org/packages/73/d4/8b8af6eedbc5c8af49817d8f37c2e55be8a2c7f75fca9bee78efbfeb40f6/pypdfium2-5.11.0-py3-none-win_amd64.whl",
         "sha256": "d3b698e7b51bdf2d633cc834395677319e1d66757896b30c632dfac7d7236c81"
       }
+    },
+    "powerpointSidecar": {
+      "version": "0.1.0",
+      "pythonVersion": "3.11.9",
+      "pyinstallerVersion": "6.16.0",
+      "sourceDateEpoch": 1781678760,
+      "specPath": "powerpoint-sidecar/horizon-pptx.spec",
+      "requirementsPath": "powerpoint-sidecar/requirements-bundle.txt",
+      "template": {
+        "path": "powerpoint-sidecar/resources/Slide template.pptx",
+        "bundlePath": "powerpoint/Slide template.pptx",
+        "sha256": "b1cb647f4856619b2a5447b95a1505fea77ab599925cf51bb0044b844592a366"
+      },
+      "notices": {
+        "path": "powerpoint-sidecar/THIRD_PARTY_NOTICES.md",
+        "bundlePath": "powerpoint/THIRD_PARTY_NOTICES.md",
+        "sha256": "9e87f31e03d905a171ae6bfb1eb685413d4da3e40f657ec6d18b826dfebe920d"
+      },
+      "dependencyInventory": {
+        "path": "powerpoint-sidecar/requirements-bundle.txt",
+        "bundlePath": "powerpoint/requirements-bundle.txt",
+        "sha256": "facd8ca30c4da0baf0bf41e20e59cd430e82c4d2c6d98ceb8e795d03b666b322"
+      },
+      "licenses": {
+        "path": "powerpoint-sidecar/licenses",
+        "bundlePath": "powerpoint/licenses",
+        "fileCount": 39,
+        "sha256": "d4e314940ae4216390055f9e56b93a5302f9f439752f1182a5cf265ead0a8d98"
+      }
     }
   },
   "toolchains": {
@@ -92,6 +121,11 @@
         "version": "151.0.7920.0",
         "executable": false
       },
+      "powerpointSidecar": {
+        "path": "src-tauri/binaries/powerpoint-sidecar-aarch64-apple-darwin",
+        "version": "0.1.0",
+        "executable": true
+      },
       "dynamicDependencies": {
         "allowedPrefixes": ["/System/Library/", "/usr/lib/"],
         "allowedInstallNames": ["./libpdfium.dylib"]
@@ -131,6 +165,27 @@
         "sha256": "0aa3abb1aa20798094c1a5f2d8cdea45b24a6e12cdc6c774de261dd522dbdf81",
         "version": "151.0.7920.0",
         "executable": false
+      },
+      "powerpointSidecar": {
+        "path": "src-tauri/binaries/powerpoint-sidecar-x86_64-pc-windows-msvc.exe",
+        "version": "0.1.0",
+        "executable": true,
+        "dynamicDependencies": {
+          "allowedNames": [
+            "ADVAPI32.dll",
+            "KERNEL32.dll",
+            "MSVCRT.dll",
+            "SHELL32.dll",
+            "USER32.dll",
+            "VERSION.dll",
+            "WS2_32.dll"
+          ],
+          "deniedNames": [
+            "libgcc_s_seh-1.dll",
+            "libstdc++-6.dll",
+            "libwinpthread-1.dll"
+          ]
+        }
       },
       "dynamicDependencies": {
         "allowedNames": [

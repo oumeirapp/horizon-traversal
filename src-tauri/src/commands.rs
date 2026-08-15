@@ -1,5 +1,7 @@
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
@@ -15,6 +17,12 @@ use crate::pipeline::native::resolve_pdfium_library;
 use crate::pipeline::pdf::shared_pdfium;
 use crate::pipeline::selection::{parse_filter, select_tickets, validate_roots, SelectionError};
 use crate::pipeline::videos::TauriMediaToolRunner;
+use crate::powerpoint::ipc::{
+    PowerPointEvent, PowerPointRequest, PowerPointRunStatus, PowerPointSummary,
+};
+use crate::powerpoint::runner::{run_powerpoint, PowerPointEventSink, PowerPointPlan};
+use crate::powerpoint::scanner::sort_ticket_paths_naturally;
+use crate::powerpoint::state::PowerPointState;
 use crate::settings::{self, AppSettings, SettingsError, SettingsState};
 use crate::state::AppState;
 
@@ -22,6 +30,14 @@ struct ChannelEventSink(Channel<PipelineEvent>);
 
 impl PipelineEventSink for ChannelEventSink {
     fn emit(&self, event: PipelineEvent) {
+        let _ = self.0.send(event);
+    }
+}
+
+struct PowerPointChannelEventSink(Channel<PowerPointEvent>);
+
+impl PowerPointEventSink for PowerPointChannelEventSink {
+    fn emit(&self, event: PowerPointEvent) {
         let _ = self.0.send(event);
     }
 }
@@ -63,6 +79,15 @@ pub async fn save_settings(
 #[tauri::command]
 pub async fn validate_selection(request: SelectionRequest) -> Result<SelectionSummary, AppError> {
     tauri::async_runtime::spawn_blocking(move || validate_request(&request).0)
+        .await
+        .map_err(|error| AppError::new("validationWorkerFailed", error.to_string()))
+}
+
+#[tauri::command]
+pub async fn validate_powerpoint_selection(
+    request: PowerPointRequest,
+) -> Result<SelectionSummary, AppError> {
+    tauri::async_runtime::spawn_blocking(move || validate_powerpoint_request(&request).0)
         .await
         .map_err(|error| AppError::new("validationWorkerFailed", error.to_string()))
 }
@@ -122,6 +147,113 @@ pub async fn start_pipeline(
 }
 
 #[tauri::command]
+pub async fn start_powerpoint(
+    app: AppHandle,
+    app_state: State<'_, AppState>,
+    powerpoint_state: State<'_, PowerPointState>,
+    request: PowerPointRequest,
+    on_event: Channel<PowerPointEvent>,
+) -> Result<PowerPointSummary, AppError> {
+    let permit = app_state.try_begin_run().ok_or_else(|| {
+        AppError::new(
+            "runInProgress",
+            "Another processing run is already in progress.",
+        )
+    })?;
+    let (selection, plan) = validate_powerpoint_request(&request);
+    let mut plan = plan.ok_or_else(|| selection_error(&selection))?;
+    let run_id = next_powerpoint_run_id();
+    let powerpoint_state = powerpoint_state.inner().clone();
+    let cancellation = powerpoint_state.begin(&run_id).ok_or_else(|| {
+        AppError::new(
+            "runInProgress",
+            "Another PowerPoint run is already in progress.",
+        )
+    })?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let _permit = permit;
+        let started = Instant::now();
+        let events = PowerPointChannelEventSink(on_event);
+        let result = (|| {
+            fs::create_dir_all(&plan.output).map_err(|error| {
+                AppError::field(
+                    "createPowerPointOutputFailed",
+                    format!("Cannot create the PowerPoint output folder: {error}"),
+                    ValidationField::Output,
+                )
+            })?;
+            let roots =
+                validate_roots(&plan.input, &plan.output).map_err(app_error_from_selection)?;
+            plan.input = roots.input;
+            plan.output = roots.output;
+            run_powerpoint(
+                app,
+                &run_id,
+                plan,
+                &cancellation,
+                &powerpoint_state,
+                &events,
+            )
+        })();
+        let summary = match result {
+            Ok(summary) => summary,
+            Err(error) => {
+                events.emit(PowerPointEvent::Log {
+                    run_id: run_id.clone(),
+                    ticket: None,
+                    level: crate::pipeline::ipc::LogLevel::Error,
+                    message: error.message,
+                    path: None,
+                    timestamp_ms: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis()
+                        .try_into()
+                        .unwrap_or(u64::MAX),
+                });
+                PowerPointSummary {
+                    status: PowerPointRunStatus::Failed,
+                    total_tickets: selection.tickets.len(),
+                    slides_created: 0,
+                    blank_slides: 0,
+                    warnings: 0,
+                    errors: 1,
+                    elapsed_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                    output_path: None,
+                    report_path: None,
+                }
+            }
+        };
+        events.emit(PowerPointEvent::PowerpointCompleted {
+            run_id: run_id.clone(),
+            summary: summary.clone(),
+        });
+        powerpoint_state.finish(&run_id);
+        Ok(summary)
+    })
+    .await
+    .map_err(|error| AppError::new("powerPointWorkerFailed", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn cancel_powerpoint(
+    state: State<'_, PowerPointState>,
+    run_id: String,
+) -> Result<(), AppError> {
+    match state
+        .cancel(&run_id)
+        .map_err(|error| AppError::new("cancelPowerPointFailed", error.to_string()))?
+    {
+        true => Ok(()),
+        false => Err(AppError::new(
+            "powerPointRunUnavailable",
+            "The PowerPoint run is no longer active.",
+        )),
+    }
+}
+
+#[tauri::command]
 pub async fn open_last_output(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
     if state.is_running() {
         return Err(AppError::new(
@@ -155,6 +287,45 @@ pub async fn open_last_output(app: AppHandle, state: State<'_, AppState>) -> Res
     app.opener()
         .open_path(stored.to_string_lossy().into_owned(), None::<&str>)
         .map_err(|error| AppError::new("openOutputFailed", error.to_string()))
+}
+
+#[tauri::command]
+pub async fn open_powerpoint_output(
+    app: AppHandle,
+    app_state: State<'_, AppState>,
+    state: State<'_, PowerPointState>,
+) -> Result<(), AppError> {
+    if app_state.is_running() {
+        return Err(AppError::new(
+            "runInProgress",
+            "The presentation can be opened after generation finishes.",
+        ));
+    }
+    let stored = state.last_output().ok_or_else(|| {
+        AppError::new(
+            "noPowerPointOutput",
+            "No completed PowerPoint presentation is available yet.",
+        )
+    })?;
+    let metadata = fs::symlink_metadata(&stored)
+        .map_err(|error| AppError::new("powerPointOutputUnavailable", error.to_string()))?;
+    if metadata_is_link_like(&metadata) || !metadata.is_file() {
+        return Err(AppError::new(
+            "powerPointOutputUnavailable",
+            "The stored PowerPoint presentation is no longer a safe file.",
+        ));
+    }
+    let canonical = fs::canonicalize(&stored)
+        .map_err(|error| AppError::new("powerPointOutputUnavailable", error.to_string()))?;
+    if canonical != stored {
+        return Err(AppError::new(
+            "powerPointOutputUnavailable",
+            "The stored PowerPoint presentation has changed since generation completed.",
+        ));
+    }
+    app.opener()
+        .open_path(stored.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|error| AppError::new("openPowerPointFailed", error.to_string()))
 }
 
 pub(crate) fn validate_request(
@@ -258,6 +429,74 @@ pub(crate) fn validate_request(
         processing_options: request.processing_options,
     };
     (summary, Some(plan))
+}
+
+pub(crate) fn validate_powerpoint_request(
+    request: &PowerPointRequest,
+) -> (SelectionSummary, Option<PowerPointPlan>) {
+    let selection_request = SelectionRequest {
+        input_path: request.input_path.clone(),
+        output_path: request.output_path.clone(),
+        ticket_filter: String::new(),
+        processing_options: crate::pipeline::ipc::ProcessingOptions {
+            pdf: false,
+            images: false,
+            video: false,
+        },
+    };
+    let (mut summary, plan) = validate_request(&selection_request);
+    let Some(plan) = plan else {
+        return (summary, None);
+    };
+    let mut tickets = plan
+        .tickets
+        .into_iter()
+        .filter(|path| {
+            !path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .starts_with('.')
+        })
+        .collect::<Vec<_>>();
+    sort_ticket_paths_naturally(&mut tickets);
+    summary.tickets.sort_by_key(|ticket| {
+        tickets
+            .iter()
+            .position(|path| path.to_string_lossy() == ticket.path)
+            .unwrap_or(usize::MAX)
+    });
+    summary
+        .tickets
+        .retain(|ticket| !ticket.name.starts_with('.'));
+    if tickets.is_empty() {
+        summary.valid = false;
+        summary.issues.push(issue(
+            ValidationField::Selection,
+            "noMatchingTickets",
+            "No visible ticket folders were found in this selection.",
+        ));
+        return (summary, None);
+    }
+    summary.valid = true;
+    (
+        summary,
+        Some(PowerPointPlan {
+            input: plan.input,
+            output: plan.output,
+            tickets,
+        }),
+    )
+}
+
+fn next_powerpoint_run_id() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("pptx-{timestamp}-{counter}")
 }
 
 fn issue(
@@ -375,5 +614,49 @@ mod tests {
         let plan = plan.unwrap();
         assert_eq!(plan.tickets.len(), 2);
         assert_eq!(plan.processing_options, request.processing_options);
+    }
+
+    #[test]
+    fn powerpoint_validation_selects_visible_immediate_folders_without_a_filter() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("input");
+        let output = temp.path().join("presentations");
+        fs::create_dir_all(input.join("Ticket 10")).unwrap();
+        fs::create_dir_all(input.join("Ticket 2")).unwrap();
+        fs::create_dir_all(input.join(".staging")).unwrap();
+        fs::write(input.join("readme.txt"), b"not a ticket").unwrap();
+
+        let (summary, plan) = validate_powerpoint_request(&PowerPointRequest {
+            input_path: input.to_string_lossy().into_owned(),
+            output_path: output.to_string_lossy().into_owned(),
+        });
+
+        assert!(summary.valid);
+        assert_eq!(
+            summary
+                .tickets
+                .iter()
+                .map(|ticket| ticket.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Ticket 2", "Ticket 10"]
+        );
+        assert_eq!(plan.unwrap().tickets.len(), 2);
+    }
+
+    #[test]
+    fn powerpoint_validation_rejects_only_its_own_overlapping_output() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("input");
+        fs::create_dir_all(input.join("P1")).unwrap();
+
+        let (summary, plan) = validate_powerpoint_request(&PowerPointRequest {
+            input_path: input.to_string_lossy().into_owned(),
+            output_path: input.join("pptx").to_string_lossy().into_owned(),
+        });
+
+        assert!(!summary.valid);
+        assert!(plan.is_none());
+        assert_eq!(summary.issues[0].code, "overlappingPaths");
+        assert_eq!(summary.issues[0].field, ValidationField::Output);
     }
 }

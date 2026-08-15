@@ -28,8 +28,16 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/ffmpeg", "binaries/ffprobe"],
+    "externalBin": [
+      "binaries/ffmpeg",
+      "binaries/ffprobe",
+      "binaries/powerpoint-sidecar"
+    ],
     "resources": {
+      "../powerpoint-sidecar/resources/Slide template.pptx": "powerpoint/Slide template.pptx",
+      "../powerpoint-sidecar/THIRD_PARTY_NOTICES.md": "powerpoint/THIRD_PARTY_NOTICES.md",
+      "../powerpoint-sidecar/requirements-bundle.txt": "powerpoint/requirements-bundle.txt",
+      "../powerpoint-sidecar/licenses": "powerpoint/licenses",
       "native-assets.json": "native-assets.json",
       "binaries/THIRD_PARTY_NOTICES.md": "binaries/THIRD_PARTY_NOTICES.md",
       "binaries/licenses": "binaries/licenses",

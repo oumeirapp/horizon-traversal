@@ -408,12 +408,21 @@ fn replacing_ticket_output_removes_only_that_ticket() {
     let ticket = temp.path().join("P1 Campaign");
     fs::create_dir_all(&ticket).unwrap();
     write(&output.join("P1 Campaign/stale.jpg"), "stale");
+    write(&output.join("P1 Campaign/Master/stale-master.jpg"), "stale");
+    write(
+        &output.join("P1 Campaign/Deliverables/stale-deliverable.jpg"),
+        "stale",
+    );
     write(&output.join("P2 Campaign/keep.jpg"), "keep");
 
     let prepared = replace_ticket_output(&output, &ticket).unwrap();
 
     assert!(prepared.is_dir());
-    assert!(names(&prepared).is_empty());
+    assert_eq!(names(&prepared), ["Deliverables", "Master"]);
+    assert!(prepared.join("Deliverables").is_dir());
+    assert!(prepared.join("Master").is_dir());
+    assert!(names(&prepared.join("Deliverables")).is_empty());
+    assert!(names(&prepared.join("Master")).is_empty());
     assert!(output.join("P2 Campaign/keep.jpg").is_file());
 }
 

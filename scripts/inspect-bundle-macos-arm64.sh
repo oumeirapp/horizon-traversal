@@ -3,6 +3,7 @@
 set -eu
 
 FFMPEG_VERSION="8.1.2"
+POWERPOINT_SIDECAR_VERSION="0.1.0"
 
 fail() {
   printf 'error: %s\n' "$*" >&2
@@ -15,6 +16,10 @@ require_command() {
 
 require_file() {
   [ -f "$1" ] || fail "required bundle file is missing: $1"
+}
+
+require_directory() {
+  [ -d "$1" ] && [ ! -L "$1" ] || fail "required bundle directory is missing or unsafe: $1"
 }
 
 require_executable() {
@@ -101,10 +106,35 @@ print_and_verify_hash() {
   fi
 }
 
+print_and_verify_tree() {
+  directory=$1
+  label=$2
+  expected_hash=$3
+  expected_count=$4
+  require_directory "$directory"
+  symlink=$(find "$directory" -type l -print -quit)
+  [ -z "$symlink" ] || fail "$label contains a symlink: $symlink"
+  actual_count=$(find "$directory" -type f | wc -l | tr -d ' ')
+  [ "$actual_count" = "$expected_count" ] ||
+    fail "$label contains $actual_count files; expected $expected_count"
+  actual_hash=$(
+    cd "$directory"
+    find . -type f -print | LC_ALL=C sort | while IFS= read -r entry; do
+      relative=${entry#./}
+      digest=$(shasum -a 256 "$relative" | awk '{print $1}')
+      printf '%s  %s\n' "$digest" "$relative"
+    done | shasum -a 256 | awk '{print $1}'
+  )
+  printf '%s files: %s\n' "$label" "$actual_count"
+  printf '%s SHA-256: %s\n' "$label" "$actual_hash"
+  [ "$actual_hash" = "$expected_hash" ] ||
+    fail "$label checksum mismatch: expected $expected_hash, received $actual_hash"
+}
+
 [ "$#" -eq 1 ] || fail "usage: $0 /path/to/Horizon\\ Traversal.app"
 [ "$(uname -s)" = "Darwin" ] || fail "bundle inspection requires macOS"
 
-for command in awk codesign grep lipo otool plutil shasum uname; do
+for command in awk codesign find grep lipo otool plutil shasum sort tr uname wc; do
   require_command "$command"
 done
 require_file "/usr/libexec/PlistBuddy"
@@ -127,7 +157,12 @@ esac
 APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 FFMPEG="$APP_BUNDLE/Contents/MacOS/ffmpeg"
 FFPROBE="$APP_BUNDLE/Contents/MacOS/ffprobe"
+POWERPOINT_SIDECAR="$APP_BUNDLE/Contents/MacOS/powerpoint-sidecar"
 PDFIUM="$APP_BUNDLE/Contents/Frameworks/libpdfium.dylib"
+POWERPOINT_TEMPLATE="$APP_BUNDLE/Contents/Resources/powerpoint/Slide template.pptx"
+POWERPOINT_NOTICES="$APP_BUNDLE/Contents/Resources/powerpoint/THIRD_PARTY_NOTICES.md"
+POWERPOINT_DEPENDENCY_INVENTORY="$APP_BUNDLE/Contents/Resources/powerpoint/requirements-bundle.txt"
+POWERPOINT_LICENSES="$APP_BUNDLE/Contents/Resources/powerpoint/licenses"
 THIRD_PARTY_NOTICES="$APP_BUNDLE/Contents/Resources/binaries/THIRD_PARTY_NOTICES.md"
 GPL_LICENSE="$APP_BUNDLE/Contents/Resources/binaries/licenses/GPL-2.0-or-later.txt"
 NATIVE_MANIFEST="$APP_BUNDLE/Contents/Resources/native-assets.json"
@@ -135,7 +170,12 @@ NATIVE_MANIFEST="$APP_BUNDLE/Contents/Resources/native-assets.json"
 require_executable "$APP_EXECUTABLE"
 require_executable "$FFMPEG"
 require_executable "$FFPROBE"
+require_executable "$POWERPOINT_SIDECAR"
 require_file "$PDFIUM"
+require_file "$POWERPOINT_TEMPLATE"
+require_file "$POWERPOINT_NOTICES"
+require_file "$POWERPOINT_DEPENDENCY_INVENTORY"
+require_directory "$POWERPOINT_LICENSES"
 require_file "$THIRD_PARTY_NOTICES"
 require_file "$GPL_LICENSE"
 require_file "$NATIVE_MANIFEST"
@@ -145,6 +185,11 @@ plutil -convert json -o /dev/null "$NATIVE_MANIFEST" ||
 MANIFEST_SCHEMA=$(plutil -extract schemaVersion raw -o - "$NATIVE_MANIFEST")
 [ "$MANIFEST_SCHEMA" = "2" ] || fail "unsupported native asset manifest schema: $MANIFEST_SCHEMA"
 PDFIUM_SHA256=$(plutil -extract 'targets.aarch64-apple-darwin.pdfium.sha256' raw -o - "$NATIVE_MANIFEST")
+POWERPOINT_TEMPLATE_SHA256=$(plutil -extract 'sources.powerpointSidecar.template.sha256' raw -o - "$NATIVE_MANIFEST")
+POWERPOINT_NOTICES_SHA256=$(plutil -extract 'sources.powerpointSidecar.notices.sha256' raw -o - "$NATIVE_MANIFEST")
+POWERPOINT_DEPENDENCY_INVENTORY_SHA256=$(plutil -extract 'sources.powerpointSidecar.dependencyInventory.sha256' raw -o - "$NATIVE_MANIFEST")
+POWERPOINT_LICENSES_SHA256=$(plutil -extract 'sources.powerpointSidecar.licenses.sha256' raw -o - "$NATIVE_MANIFEST")
+POWERPOINT_LICENSES_FILE_COUNT=$(plutil -extract 'sources.powerpointSidecar.licenses.fileCount' raw -o - "$NATIVE_MANIFEST")
 
 if [ "${HORIZON_TRAVERSAL_SKIP_CODESIGN_VERIFY:-0}" = "1" ]; then
   printf '%s\n' 'Code-signature verification skipped explicitly for this local unsigned smoke bundle.'
@@ -158,16 +203,19 @@ fi
 verify_arm64 "$APP_EXECUTABLE" "application"
 verify_arm64 "$FFMPEG" "ffmpeg"
 verify_arm64 "$FFPROBE" "ffprobe"
+verify_arm64 "$POWERPOINT_SIDECAR" "powerpoint-sidecar"
 verify_arm64 "$PDFIUM" "PDFium"
 
 verify_supports_macos_12 "$APP_EXECUTABLE" "application"
 verify_supports_macos_12 "$FFMPEG" "ffmpeg"
 verify_supports_macos_12 "$FFPROBE" "ffprobe"
+verify_supports_macos_12 "$POWERPOINT_SIDECAR" "powerpoint-sidecar"
 verify_supports_macos_12 "$PDFIUM" "PDFium"
 
 inspect_dependencies "$APP_EXECUTABLE" "application" ""
 inspect_dependencies "$FFMPEG" "ffmpeg" ""
 inspect_dependencies "$FFPROBE" "ffprobe" ""
+inspect_dependencies "$POWERPOINT_SIDECAR" "powerpoint-sidecar" ""
 inspect_dependencies "$PDFIUM" "PDFium" "./libpdfium.dylib"
 
 FFMPEG_OUTPUT=$("$FFMPEG" -hide_banner -version 2>&1)
@@ -199,6 +247,10 @@ while required_encoder=$(plutil -extract "targets.aarch64-apple-darwin.ffmpeg.re
 done
 [ "$encoder_index" -gt 0 ] || fail "native asset manifest declares no required FFmpeg encoders"
 
+POWERPOINT_SIDECAR_OUTPUT=$("$POWERPOINT_SIDECAR" --version 2>&1)
+[ "$POWERPOINT_SIDECAR_OUTPUT" = "$POWERPOINT_SIDECAR_VERSION" ] ||
+  fail "powerpoint-sidecar did not report pinned version $POWERPOINT_SIDECAR_VERSION"
+
 printf 'ffmpeg version: %s\n' "$(printf '%s\n' "$FFMPEG_OUTPUT" | awk 'NR == 1 { print $3 }')"
 printf 'ffprobe version: %s\n' "$(printf '%s\n' "$FFPROBE_OUTPUT" | awk 'NR == 1 { print $3 }')"
 print_and_verify_hash "$APP_EXECUTABLE" "application" "${HORIZON_TRAVERSAL_APP_SHA256:-}"
@@ -213,7 +265,12 @@ else
 fi
 print_hash "$FFMPEG" "ffmpeg"
 print_hash "$FFPROBE" "ffprobe"
+print_hash "$POWERPOINT_SIDECAR" "powerpoint-sidecar"
 print_and_verify_hash "$PDFIUM" "PDFium" "$PDFIUM_EXPECTED"
+print_and_verify_hash "$POWERPOINT_TEMPLATE" "PowerPoint slide template" "$POWERPOINT_TEMPLATE_SHA256"
+print_and_verify_hash "$POWERPOINT_NOTICES" "PowerPoint sidecar notices" "$POWERPOINT_NOTICES_SHA256"
+print_and_verify_hash "$POWERPOINT_DEPENDENCY_INVENTORY" "PowerPoint dependency inventory" "$POWERPOINT_DEPENDENCY_INVENTORY_SHA256"
+print_and_verify_tree "$POWERPOINT_LICENSES" "PowerPoint license tree" "$POWERPOINT_LICENSES_SHA256" "$POWERPOINT_LICENSES_FILE_COUNT"
 print_and_verify_hash "$NATIVE_MANIFEST" "native asset manifest" ""
 
 distribution_index=0

@@ -40,11 +40,52 @@ impl MediaToolRunner for UnexpectedMediaTools {
     }
 }
 
+#[derive(Default)]
+struct InBoundsMediaTools(Mutex<Vec<PathBuf>>);
+
+impl InBoundsMediaTools {
+    fn probed_paths(&self) -> Vec<PathBuf> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+impl MediaToolRunner for InBoundsMediaTools {
+    fn run(&self, tool: NativeTool, arguments: &[OsString]) -> Result<ToolOutput, ToolRunError> {
+        match tool {
+            NativeTool::Ffprobe => {
+                self.0.lock().unwrap().push(PathBuf::from(
+                    arguments
+                        .last()
+                        .expect("ffprobe arguments include the source path"),
+                ));
+                Ok(ToolOutput {
+                    success: true,
+                    code: Some(0),
+                    stdout: br#"{"streams":[{"codec_type":"video","width":640,"height":360}],"format":{}}"#
+                        .to_vec(),
+                    stderr: Vec::new(),
+                })
+            }
+            NativeTool::Ffmpeg => Err(ToolRunError::new(
+                tool,
+                "in-bounds coordinator fixtures must not be encoded",
+            )),
+        }
+    }
+}
+
 fn write(path: &Path, contents: &[u8]) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).unwrap();
     }
     fs::write(path, contents).unwrap();
+}
+
+fn copy_fixture(source: &Path, destination: &Path) {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    fs::copy(source, destination).unwrap();
 }
 
 fn plan(input: PathBuf, output: PathBuf, tickets: Vec<PathBuf>) -> PipelinePlan {
@@ -80,6 +121,18 @@ fn structural_events(events: &[PipelineEvent]) -> Vec<String> {
                 Some(format!("pipeline:complete:{}", status_name(summary.status)))
             }
             PipelineEvent::Log { .. } => None,
+        })
+        .collect()
+}
+
+fn log_paths(events: &[PipelineEvent], message_prefix: &str) -> Vec<PathBuf> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            PipelineEvent::Log { message, path, .. } if message.starts_with(message_prefix) => {
+                path.as_deref().map(PathBuf::from)
+            }
+            _ => None,
         })
         .collect()
 }
@@ -167,19 +220,19 @@ fn disabled_processing_stages_keep_stage_order_and_skip_all_processors() {
         ]
     );
     assert_eq!(
-        fs::read(output.join("P1 Unoptimized/document.pdf")).unwrap(),
+        fs::read(output.join("P1 Unoptimized/Deliverables/document.pdf")).unwrap(),
         b"not a PDF fixture"
     );
     assert_eq!(
-        fs::read(output.join("P1 Unoptimized/document_1.pdf")).unwrap(),
+        fs::read(output.join("P1 Unoptimized/Deliverables/document_1.pdf")).unwrap(),
         b"second source fixture"
     );
     assert_eq!(
-        fs::read(output.join("P1 Unoptimized/poster.jpg")).unwrap(),
+        fs::read(output.join("P1 Unoptimized/Deliverables/poster.jpg")).unwrap(),
         b"not a JPEG fixture"
     );
     assert_eq!(
-        fs::read(output.join("P1 Unoptimized/clip.mp4")).unwrap(),
+        fs::read(output.join("P1 Unoptimized/Deliverables/clip.mp4")).unwrap(),
         b"not an MP4 fixture"
     );
     assert_eq!(
@@ -193,6 +246,142 @@ fn disabled_processing_stages_keep_stage_order_and_skip_all_processors() {
 }
 
 #[test]
+fn categories_have_independent_flat_collision_names() {
+    let temp = tempdir().unwrap();
+    let input = temp.path().join("input");
+    let output = temp.path().join("output");
+    let ticket = input.join("P1 Categories");
+    write(&ticket.join("Master Files/A/shared.gif"), b"master first");
+    write(&ticket.join("Master Files/B/shared.gif"), b"master second");
+    write(
+        &ticket.join("Deliverables/A/shared.gif"),
+        b"deliverables first",
+    );
+    write(
+        &ticket.join("Deliverables/B/shared.gif"),
+        b"deliverables second",
+    );
+
+    let mut pipeline_plan = plan(input, output.clone(), vec![ticket]);
+    pipeline_plan.processing_options = ProcessingOptions {
+        pdf: false,
+        images: false,
+        video: false,
+    };
+    let summary = run_pipeline(
+        pipeline_plan,
+        None,
+        &UnexpectedMediaTools,
+        &RecordingEvents::default(),
+    );
+
+    assert_eq!(summary.status, RunStatus::Success);
+    assert_eq!(summary.copied_files, 4);
+    assert_eq!(
+        fs::read(output.join("P1 Categories/Master/shared.gif")).unwrap(),
+        b"master first"
+    );
+    assert_eq!(
+        fs::read(output.join("P1 Categories/Master/shared_1.gif")).unwrap(),
+        b"master second"
+    );
+    assert_eq!(
+        fs::read(output.join("P1 Categories/Deliverables/shared.gif")).unwrap(),
+        b"deliverables first"
+    );
+    assert_eq!(
+        fs::read(output.join("P1 Categories/Deliverables/shared_1.gif")).unwrap(),
+        b"deliverables second"
+    );
+    assert!(!output.join("P1 Categories/shared.gif").exists());
+    assert!(output.join("P1 Categories/report.csv").is_file());
+}
+
+#[test]
+fn processors_visit_master_then_deliverables_without_recursing_from_ticket_root() {
+    let temp = tempdir().unwrap();
+    let input = temp.path().join("input");
+    let output = temp.path().join("output");
+    let ticket = input.join("P1 Processing Order");
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let pdf_fixture = manifest.join("tests/fixtures/one-page.pdf");
+    let image_fixture = manifest.join("icons/128x128@2x.png");
+
+    copy_fixture(
+        &pdf_fixture,
+        &ticket.join("Master Files/Print/master-document.pdf"),
+    );
+    copy_fixture(
+        &image_fixture,
+        &ticket.join("Master Files/Print/master-image.png"),
+    );
+    write(
+        &ticket.join("Master Files/Print/master-video.mp4"),
+        b"probe fixture",
+    );
+    copy_fixture(
+        &pdf_fixture,
+        &ticket.join("Deliverables/Creative/deliverable-document.pdf"),
+    );
+    copy_fixture(
+        &image_fixture,
+        &ticket.join("Deliverables/Creative/deliverable-image.png"),
+    );
+    write(
+        &ticket.join("Deliverables/Creative/deliverable-video.mp4"),
+        b"probe fixture",
+    );
+
+    let events = RecordingEvents::default();
+    let media_tools = InBoundsMediaTools::default();
+    let library = resolve_pdfium_library(None).unwrap();
+    let pdfium = shared_pdfium(&library).unwrap();
+    let summary = run_pipeline(
+        plan(input, output.clone(), vec![ticket]),
+        Some(pdfium),
+        &media_tools,
+        &events,
+    );
+    let recorded = events.snapshot();
+    let ticket_output = output.join("P1 Processing Order");
+
+    assert_eq!(summary.status, RunStatus::Success);
+    assert_eq!(summary.copied_files, 6);
+    assert_eq!(summary.failed_files, 0);
+    assert_eq!(summary.errors, 0);
+    assert_eq!(
+        log_paths(&recorded, "Converting PDF:"),
+        [
+            ticket_output.join("Master/master-document.pdf"),
+            ticket_output.join("Deliverables/deliverable-document.pdf"),
+        ]
+    );
+    assert_eq!(
+        log_paths(&recorded, "Processing image:"),
+        [
+            ticket_output.join("Master/master-document.png"),
+            ticket_output.join("Master/master-image.png"),
+            ticket_output.join("Deliverables/deliverable-document.png"),
+            ticket_output.join("Deliverables/deliverable-image.png"),
+        ]
+    );
+    assert_eq!(
+        log_paths(&recorded, "Processing video:"),
+        [
+            ticket_output.join("Master/master-video.mp4"),
+            ticket_output.join("Deliverables/deliverable-video.mp4"),
+        ]
+    );
+    assert_eq!(
+        media_tools.probed_paths(),
+        [
+            ticket_output.join("Master/master-video.mp4"),
+            ticket_output.join("Deliverables/deliverable-video.mp4"),
+        ]
+    );
+}
+
+#[test]
 fn multi_ticket_run_orders_events_and_keeps_reports_ticket_local() {
     let temp = tempdir().unwrap();
     let input = temp.path().join("input");
@@ -200,7 +389,7 @@ fn multi_ticket_run_orders_events_and_keeps_reports_ticket_local() {
     let first = input.join("P1 First");
     let second = input.join("P2 Second");
     let first_asset = first.join("Deliverables/nested/first_210x297.gif");
-    let second_asset = second.join("Master Files/Print/second.gif");
+    let second_asset = second.join("Deliverables/Nested Master Files/Print/second.gif");
     write(&first_asset, b"first fixture");
     write(&second_asset, b"second fixture");
     write(&output.join("1. report.csv"), b"stale aggregate");
@@ -221,6 +410,17 @@ fn multi_ticket_run_orders_events_and_keeps_reports_ticket_local() {
     expected.extend(expected_ticket_events("P2 Second", "success"));
     expected.push("pipeline:complete:success".to_owned());
     assert_eq!(structural_events(&recorded), expected);
+
+    assert_eq!(
+        fs::read(output.join("P1 First/Deliverables/first_210x297.gif")).unwrap(),
+        b"first fixture"
+    );
+    assert_eq!(
+        fs::read(output.join("P2 Second/Master/second.gif")).unwrap(),
+        b"second fixture"
+    );
+    assert!(!output.join("P1 First/first_210x297.gif").exists());
+    assert!(!output.join("P2 Second/second.gif").exists());
 
     assert_eq!(
         fs::read_to_string(output.join("P1 First/report.csv")).unwrap(),
@@ -361,9 +561,19 @@ fn reports_creative_sizes_and_excludes_master_video_and_versions() {
             "P132446,Video,15 sec 1440x1800\n",
         )
     );
-    assert!(!output.join("P132446/Master-20s_4-5.mp4").exists());
-    assert!(!output.join("P132446/excluded_210x297.jpg").exists());
-    assert!(!output.join("P132446/old_10s_1-1.mp4").exists());
+    assert!(output.join("P132446/Master").is_dir());
+    assert!(output
+        .join("P132446/Deliverables/C.B.GB.140Y_VOD_Moment-CLA-C174-Fast-Charging-20s_4-5_HQMaster_NO-VO_H264.mp4")
+        .is_file());
+    assert!(output
+        .join("P132446/Deliverables/C.B.GB.140Y_VOD_Moment-CLA-C174-Fast-Charging-20s_9-16_HQMaster_NO-VO_H264.mp4")
+        .is_file());
+    assert!(output
+        .join("P132446/Deliverables/Video_260713_P132446_(3 JUL) 2026_MBPC_140YOI_Slide 3_E-class_15sec_Video_1440x1800px_V2R0.mp4")
+        .is_file());
+    assert!(!output.join("P132446/Master/Master-20s_4-5.mp4").exists());
+    assert!(!output.join("P132446/Master/excluded_210x297.jpg").exists());
+    assert!(!output.join("P132446/Deliverables/old_10s_1-1.mp4").exists());
 }
 
 #[test]
@@ -404,6 +614,7 @@ fn warning_only_ticket_and_run_are_successful() {
 
     assert!(!output.join("P1 Missing Sources/report.csv").exists());
     assert!(output.join("P2 Ready/report.csv").is_file());
+    assert!(output.join("P2 Ready/Deliverables/ready.gif").is_file());
     assert_eq!(
         fs::read_to_string(output.join("P2 Ready/report.csv")).unwrap(),
         "Name,Ticket,Folder,Size\n"
@@ -430,6 +641,8 @@ fn aggregate_is_header_only_when_no_ticket_has_a_source_folder() {
 
     assert_eq!(summary.status, RunStatus::Success);
     assert!(!output.join("P1 Missing Sources/report.csv").exists());
+    assert!(output.join("P1 Missing Sources/Master").is_dir());
+    assert!(output.join("P1 Missing Sources/Deliverables").is_dir());
     assert_eq!(
         fs::read_to_string(output.join("1. report.csv")).unwrap(),
         "Name,Ticket,Folder,Size\n"

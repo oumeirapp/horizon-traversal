@@ -75,7 +75,9 @@ test("Windows smoke creates and inspects PNG fixtures without FFmpeg PNG support
 test("package smokes verify exact per-ticket and aggregate CSV content", () => {
   for (const smoke of [macosSmoke, windowsSmoke]) {
     assert.match(smoke, /Deliverables[\\/]Creative/);
+    assert.match(smoke, /Master Files[\\/]Print/);
     assert.match(smoke, /Brief\.pdf/);
+    assert.match(smoke, /MasterBrief\.pdf/);
     assert.match(smoke, /Visual_2400x1500px\.png/);
     assert.match(smoke, /Clip_0\.2s_1080x1920px\.mp4/);
     assert.match(smoke, /report\.csv/);
@@ -83,11 +85,22 @@ test("package smokes verify exact per-ticket and aggregate CSV content", () => {
     assert.match(smoke, /Brief\.pdf,P1,Creative,Unknown/);
     assert.match(smoke, /Clip\.mp4,P1,Creative,0\.2 sec 1080x1920["']/);
     assert.match(smoke, /Visual\.png,P1,Creative,2400x1500["']/);
+    assert.match(smoke, /MasterBrief\.pdf,P1,Print,Unknown["']/);
     assert.doesNotMatch(smoke, /["']Ticket,Folder,Size["']/);
     assert.doesNotMatch(smoke, /report\.txt/);
     assert.doesNotMatch(smoke, /ticket report is missing source path/);
   }
   assert.match(macosSmoke, /cmp -s "\$EXPECTED_REPORT" "\$REPORT"/);
+  assert.match(
+    macosSmoke,
+    /MASTER_OUTPUT="\$TICKET_OUTPUT\/Master"/,
+  );
+  assert.match(
+    macosSmoke,
+    /DELIVERABLES_OUTPUT="\$TICKET_OUTPUT\/Deliverables"/,
+  );
+  assert.match(macosSmoke, /require_file "\$MASTER_OUTPUT\/MasterBrief\.png"/);
+  assert.match(macosSmoke, /require_file "\$DELIVERABLES_OUTPUT\/Brief\.png"/);
   assert.match(
     macosSmoke,
     /AGGREGATE_REPORT="\$OUTPUT_DIRECTORY\/1\. report\.csv"/,
@@ -97,6 +110,22 @@ test("package smokes verify exact per-ticket and aggregate CSV content", () => {
     /cmp -s "\$EXPECTED_REPORT" "\$AGGREGATE_REPORT"/,
   );
   assert.match(windowsSmoke, /\$ActualReport\.Equals\(\$ExpectedReport/);
+  assert.match(
+    windowsSmoke,
+    /\$MasterOutput = Join-Path \$TicketOutput "Master"/,
+  );
+  assert.match(
+    windowsSmoke,
+    /\$DeliverablesOutput = Join-Path \$TicketOutput "Deliverables"/,
+  );
+  assert.match(
+    windowsSmoke,
+    /\$MasterPdfImage = Join-Path \$MasterOutput "MasterBrief\.png"/,
+  );
+  assert.match(
+    windowsSmoke,
+    /\$PdfImage = Join-Path \$DeliverablesOutput "Brief\.png"/,
+  );
   assert.match(
     windowsSmoke,
     /\$AggregateReport = Join-Path \$OutputDirectory "1\. report\.csv"/,

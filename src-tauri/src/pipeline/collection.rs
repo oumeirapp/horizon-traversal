@@ -16,6 +16,16 @@ use super::types::{CollectionOutcome, CopiedAsset, PipelineNotice, SourceRoot, S
 
 pub const SUPPORTED_EXTENSIONS: &[&str] =
     &["jpg", "jpeg", "png", "gif", "pdf", "mp4", "avi", "mov"];
+pub(super) const OUTPUT_CATEGORY_ORDER: [SourceRootKind; 2] =
+    [SourceRootKind::MasterFiles, SourceRootKind::Deliverables];
+
+pub(super) fn category_output_path(ticket_output: &Path, source_kind: SourceRootKind) -> PathBuf {
+    let category = match source_kind {
+        SourceRootKind::MasterFiles => "Master",
+        SourceRootKind::Deliverables => "Deliverables",
+    };
+    ticket_output.join(category)
+}
 
 #[derive(Debug, Error)]
 pub enum CollectionError {
@@ -361,9 +371,12 @@ pub fn replace_ticket_output(
         })?;
     }
 
-    fs::create_dir_all(&ticket_output).map_err(|source| CollectionError::CreateOutput {
-        path: ticket_output.clone(),
-        source,
-    })?;
+    for source_kind in OUTPUT_CATEGORY_ORDER {
+        let category_output = category_output_path(&ticket_output, source_kind);
+        fs::create_dir_all(&category_output).map_err(|source| CollectionError::CreateOutput {
+            path: category_output,
+            source,
+        })?;
+    }
     Ok(ticket_output)
 }

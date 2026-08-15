@@ -24,6 +24,19 @@ test("macOS inspector reports actual media hashes without manifest pins", async 
     source,
     /targets\.aarch64-apple-darwin\.pdfium\.sha256/,
   );
+  assert.match(source, /Contents\/MacOS\/powerpoint-sidecar/);
+  assert.match(source, /POWERPOINT_SIDECAR_OUTPUT=.*--version/);
+  assert.match(source, /verify_arm64 "\$POWERPOINT_SIDECAR"/);
+  assert.match(source, /verify_supports_macos_12 "\$POWERPOINT_SIDECAR"/);
+  assert.match(
+    source,
+    /sources\.powerpointSidecar\.template\.sha256/,
+  );
+  assert.match(source, /powerpoint\/THIRD_PARTY_NOTICES\.md/);
+  assert.match(source, /powerpoint\/requirements-bundle\.txt/);
+  assert.match(source, /powerpoint\/licenses/);
+  assert.match(source, /sources\.powerpointSidecar\.licenses\.sha256/);
+  assert.match(source, /print_and_verify_tree/);
 });
 
 test("macOS inspector remains valid POSIX shell", () => {

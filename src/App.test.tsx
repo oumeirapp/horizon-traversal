@@ -4,14 +4,20 @@ import type {
   AppSettings,
   PipelineEvent,
   PipelineSummary,
+  PowerPointEvent,
+  PowerPointSummary,
   SelectionSummary,
 } from "./lib/native";
 import App from "./App";
 
 const nativeMocks = vi.hoisted(() => ({
   validateSelection: vi.fn(),
+  validatePowerPointSelection: vi.fn(),
   startPipeline: vi.fn(),
+  startPowerPoint: vi.fn(),
+  cancelPowerPoint: vi.fn(),
   openLastOutput: vi.fn(),
+  openPowerPointOutput: vi.fn(),
   loadSettings: vi.fn(),
   saveSettings: vi.fn(),
   openDialog: vi.fn(),
@@ -19,8 +25,12 @@ const nativeMocks = vi.hoisted(() => ({
 
 vi.mock("./lib/native", () => ({
   validateSelection: nativeMocks.validateSelection,
+  validatePowerPointSelection: nativeMocks.validatePowerPointSelection,
   startPipeline: nativeMocks.startPipeline,
+  startPowerPoint: nativeMocks.startPowerPoint,
+  cancelPowerPoint: nativeMocks.cancelPowerPoint,
   openLastOutput: nativeMocks.openLastOutput,
+  openPowerPointOutput: nativeMocks.openPowerPointOutput,
   loadSettings: nativeMocks.loadSettings,
   saveSettings: nativeMocks.saveSettings,
 }));
@@ -62,6 +72,18 @@ const warningOnlySummary: PipelineSummary = {
   errors: 0,
 };
 
+const powerPointSummary: PowerPointSummary = {
+  status: "success",
+  totalTickets: 2,
+  slidesCreated: 2,
+  blankSlides: 0,
+  warnings: 0,
+  errors: 0,
+  elapsedMs: 2_100,
+  outputPath: "/powerpoint-exports/Horizon Traversal.pptx",
+  reportPath: "/powerpoint-exports/Horizon Traversal.layout-report.json",
+};
+
 const defaultSettings: AppSettings = {
   defaultOutputPath: "/exports",
   powerpointOutputPath: "/powerpoint-exports",
@@ -85,16 +107,34 @@ async function configureValidRun() {
   });
 }
 
+async function switchToPowerPoint() {
+  const workflowTabs = screen.getByRole("tablist", { name: "Workflow mode" });
+  const assetTab = screen.getByRole("tab", { name: /Asset processing/ });
+  workflowTabs.focus();
+  fireEvent.focus(workflowTabs);
+  await act(async () => {
+    fireEvent.keyDown(assetTab, { key: "ArrowRight" });
+    await vi.advanceTimersByTimeAsync(1);
+  });
+}
+
 describe("Horizon Traversal workbench", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     nativeMocks.validateSelection.mockReset();
+    nativeMocks.validatePowerPointSelection.mockReset();
     nativeMocks.startPipeline.mockReset();
+    nativeMocks.startPowerPoint.mockReset();
+    nativeMocks.cancelPowerPoint.mockReset();
     nativeMocks.openLastOutput.mockReset();
+    nativeMocks.openPowerPointOutput.mockReset();
     nativeMocks.loadSettings.mockReset();
     nativeMocks.saveSettings.mockReset();
     nativeMocks.openDialog.mockReset();
     nativeMocks.validateSelection.mockResolvedValue(validSelection);
+    nativeMocks.validatePowerPointSelection.mockResolvedValue(validSelection);
+    nativeMocks.cancelPowerPoint.mockResolvedValue(undefined);
+    nativeMocks.openPowerPointOutput.mockResolvedValue(undefined);
     nativeMocks.loadSettings.mockResolvedValue(defaultSettings);
     nativeMocks.saveSettings.mockImplementation(async (settings: AppSettings) => settings);
     document.documentElement.dataset.theme = "dark";
@@ -125,7 +165,8 @@ describe("Horizon Traversal workbench", () => {
     expect(screen.getByRole("checkbox", { name: "Optimize PDFs" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Optimize images" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Optimize video" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Create PPTX" })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Create PPTX" })).not.toBeInTheDocument();
+    expect(screen.queryByText("PPTX is not available yet")).not.toBeInTheDocument();
     expect(
       screen.getByRole("group", { name: "Processing steps" }),
     ).toBeVisible();
@@ -147,6 +188,7 @@ describe("Horizon Traversal workbench", () => {
     });
 
     const workflowTabs = screen.getByRole("tablist", { name: "Workflow mode" });
+    expect(workflowTabs).toHaveAttribute("data-active-tab", "assets");
     workflowTabs.focus();
     fireEvent.focus(workflowTabs);
     expect(assetTab).toHaveFocus();
@@ -156,7 +198,8 @@ describe("Horizon Traversal workbench", () => {
     });
     expect(powerpointTab).toHaveFocus();
     expect(powerpointTab).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("PowerPoint preview")).toBeVisible();
+    expect(workflowTabs).toHaveAttribute("data-active-tab", "powerpoint");
+    expect(screen.getAllByText("Set up presentation")[0]).toBeVisible();
     expect(
       screen.queryByLabelText("Ticket filter Optional"),
     ).not.toBeInTheDocument();
@@ -176,20 +219,14 @@ describe("Horizon Traversal workbench", () => {
       await vi.advanceTimersByTimeAsync(360);
     });
 
-    expect(nativeMocks.validateSelection).toHaveBeenLastCalledWith({
+    expect(nativeMocks.validatePowerPointSelection).toHaveBeenLastCalledWith({
       inputPath: "/powerpoint-tickets",
       outputPath: "/powerpoint-exports",
-      ticketFilter: "",
-      processingOptions: {
-        pdf: false,
-        images: false,
-        video: false,
-      },
     });
     expect(screen.queryByText("Slide plan")).not.toBeInTheDocument();
     expect(screen.queryByText(/planned slides?/)).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "P1 Launch" })).toBeVisible();
-    expect(screen.getByText("Slide 1 of 2 · Preview")).toBeVisible();
+    expect(screen.getByText("Ticket 1 of 2")).toBeVisible();
     expect(
       screen.getByRole("list", { name: "PowerPoint creation stages" }),
     ).toBeVisible();
@@ -199,8 +236,9 @@ describe("Horizon Traversal workbench", () => {
     expect(
       screen.getByText(/Ticket and slide activity will appear here/),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Create PowerPoint" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create PowerPoint" })).toBeEnabled();
     expect(nativeMocks.startPipeline).not.toHaveBeenCalled();
+    expect(nativeMocks.startPowerPoint).not.toHaveBeenCalled();
 
     await act(async () => {
       fireEvent.keyDown(powerpointTab, { key: "ArrowLeft" });
@@ -208,11 +246,12 @@ describe("Horizon Traversal workbench", () => {
     });
     expect(assetTab).toHaveFocus();
     expect(assetTab).toHaveAttribute("aria-selected", "true");
+    expect(workflowTabs).toHaveAttribute("data-active-tab", "assets");
     expect(screen.getByLabelText("Input folder")).toHaveValue("/asset-tickets");
   });
 
-  it("keeps an invalid PowerPoint source in the non-generating preview", async () => {
-    nativeMocks.validateSelection.mockResolvedValue({
+  it("keeps an invalid PowerPoint source from starting", async () => {
+    nativeMocks.validatePowerPointSelection.mockResolvedValue({
       ...validSelection,
       valid: false,
       tickets: [],
@@ -249,67 +288,256 @@ describe("Horizon Traversal workbench", () => {
     expect(screen.getByText("No immediate ticket folders were found.")).toBeVisible();
     expect(screen.queryByText("Slide plan")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Ticket preview" })).toBeVisible();
-    expect(screen.queryByText(/Slide 1 of/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Ticket 1 of/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create PowerPoint" })).toBeDisabled();
     expect(nativeMocks.startPipeline).not.toHaveBeenCalled();
+    expect(nativeMocks.startPowerPoint).not.toHaveBeenCalled();
   });
 
-  it("previews frontend-only PPTX without changing the native request", async () => {
-    const successSummary: PipelineSummary = {
-      ...partialSummary,
-      status: "success",
-      successfulTickets: 1,
-      partialTickets: 0,
-      failedFiles: 0,
-      warnings: 0,
-      errors: 0,
-    };
-    nativeMocks.startPipeline.mockResolvedValue(successSummary);
+  it("starts PowerPoint creation and renders live progress through completion", async () => {
+    let resolveRun: (summary: PowerPointSummary) => void = () => undefined;
+    let emit: (event: PowerPointEvent) => void = () => undefined;
+    nativeMocks.startPowerPoint.mockImplementation(
+      (_request: unknown, onEvent: (event: PowerPointEvent) => void) => {
+        emit = onEvent;
+        onEvent({
+          type: "powerpointStarted",
+          runId: "pptx-1",
+          totalTickets: 2,
+          totalUnits: 10,
+        });
+        onEvent({
+          type: "powerpointProgress",
+          runId: "pptx-1",
+          step: "compose",
+          ticket: "P2 Brand",
+          index: 2,
+          totalTickets: 2,
+          stepCompleted: 1,
+          stepTotal: 2,
+          completedUnits: 6,
+          totalUnits: 10,
+          message: "Placing approved assets on the slide",
+        });
+        onEvent({
+          type: "log",
+          runId: "pptx-1",
+          ticket: "P2 Brand",
+          level: "info",
+          message: "Selected six deliverables",
+          path: null,
+          timestampMs: 1_750_000_000_000,
+        });
+        return new Promise<PowerPointSummary>((resolve) => {
+          resolveRun = resolve;
+        });
+      },
+    );
     render(<App />);
     await settleSettings();
 
-    const pptxOption = screen.getByRole("checkbox", { name: "Create PPTX" });
-    fireEvent.click(pptxOption);
-
-    expect(pptxOption).toBeChecked();
-    expect(
-      screen.getByText(/PPTX is not available yet/),
-    ).toBeVisible();
-    const route = screen.getByRole("list", { name: "Processing stages" });
-    expect(within(route).getAllByRole("listitem")).toHaveLength(7);
-    const powerpointStage = within(route).getByText("PowerPoint").closest("li");
-    expect(powerpointStage).toHaveClass("asset-route__stop--warning");
-
-    await configureValidRun();
-    const expectedRequest = {
-      inputPath: "/tickets",
-      outputPath: "/exports",
-      ticketFilter: "",
-      processingOptions: {
-        pdf: true,
-        images: true,
-        video: true,
-      },
-    };
-    expect(nativeMocks.validateSelection).toHaveBeenLastCalledWith(expectedRequest);
+    await switchToPowerPoint();
+    fireEvent.change(screen.getByLabelText("Root folder"), {
+      target: { value: "/powerpoint-tickets" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(360);
+    });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Start processing" }));
+      fireEvent.click(screen.getByRole("button", { name: "Create PowerPoint" }));
       await Promise.resolve();
     });
 
-    expect(nativeMocks.startPipeline).toHaveBeenCalledWith(
-      expectedRequest,
+    expect(nativeMocks.startPowerPoint).toHaveBeenCalledWith(
+      {
+        inputPath: "/powerpoint-tickets",
+        outputPath: "/powerpoint-exports",
+      },
       expect.any(Function),
     );
-    expect(powerpointStage).toHaveClass("asset-route__stop--warning");
-    expect(powerpointStage).not.toHaveClass("asset-route__stop--complete");
-    const assetTab = screen.getByRole("tab", { name: /Asset processing/ });
-    const powerpointTab = screen.getByRole("tab", { name: /PowerPoint only/ });
-    expect(assetTab).toBeEnabled();
-    expect(powerpointTab).toBeDisabled();
-    fireEvent.keyDown(assetTab, { key: "ArrowRight" });
-    expect(assetTab).toHaveAttribute("aria-selected", "true");
+    expect(
+      screen.queryByText("Placing approved assets on the slide"),
+    ).not.toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+    });
+    expect(screen.getByRole("heading", { name: "P2 Brand", level: 2 })).toBeVisible();
+    expect(screen.getByText("Ticket 2 of 2")).toBeVisible();
+    expect(screen.getAllByText("Compose slide")[0]).toBeVisible();
+    expect(screen.getByText("Placing approved assets on the slide")).toBeVisible();
+    expect(
+      screen.getByRole("progressbar", { name: "PowerPoint creation progress" }),
+    ).toHaveAttribute("aria-valuenow", "60");
+    expect(screen.getByText("Selected six deliverables")).toBeVisible();
+    expect(screen.getByLabelText("Root folder")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel creation" })).toBeEnabled();
+    expect(screen.getByRole("tab", { name: /Asset processing/ })).toBeDisabled();
+    expect(screen.queryByText("Slide plan")).not.toBeInTheDocument();
+
+    await act(async () => {
+      emit({
+        type: "powerpointCompleted",
+        runId: "pptx-1",
+        summary: powerPointSummary,
+      });
+      resolveRun(powerPointSummary);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("heading", { name: "PowerPoint ready" })).toBeVisible();
+    const openPresentation = screen.getByRole("button", {
+      name: "Open presentation",
+    });
+    await act(async () => {
+      fireEvent.click(openPresentation);
+      await Promise.resolve();
+    });
+    expect(nativeMocks.openPowerPointOutput).toHaveBeenCalledOnce();
+  });
+
+  it("requests cooperative cancellation for the active PowerPoint run", async () => {
+    let resolveRun: (summary: PowerPointSummary) => void = () => undefined;
+    let emit: (event: PowerPointEvent) => void = () => undefined;
+    nativeMocks.startPowerPoint.mockImplementation(
+      (_request: unknown, onEvent: (event: PowerPointEvent) => void) => {
+        emit = onEvent;
+        onEvent({
+          type: "powerpointStarted",
+          runId: "pptx-cancel",
+          totalTickets: 2,
+          totalUnits: 10,
+        });
+        onEvent({
+          type: "powerpointProgress",
+          runId: "pptx-cancel",
+          step: "layout",
+          ticket: "P1 Launch",
+          index: 1,
+          totalTickets: 2,
+          stepCompleted: 1,
+          stepTotal: 2,
+          completedUnits: 4,
+          totalUnits: 10,
+          message: "Planning the first slide",
+        });
+        return new Promise<PowerPointSummary>((resolve) => {
+          resolveRun = resolve;
+        });
+      },
+    );
+    render(<App />);
+    await settleSettings();
+
+    await switchToPowerPoint();
+    fireEvent.change(screen.getByLabelText("Root folder"), {
+      target: { value: "/powerpoint-tickets" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(360);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create PowerPoint" }));
+      await vi.advanceTimersByTimeAsync(20);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel creation" }));
+      await Promise.resolve();
+    });
+
+    expect(nativeMocks.cancelPowerPoint).toHaveBeenCalledWith("pptx-cancel");
+    expect(screen.getByRole("button", { name: "Cancelling…" })).toBeDisabled();
+
+    const cancelled: PowerPointSummary = {
+      ...powerPointSummary,
+      status: "cancelled",
+      slidesCreated: 0,
+      outputPath: null,
+      reportPath: null,
+    };
+    await act(async () => {
+      emit({
+        type: "powerpointCompleted",
+        runId: "pptx-cancel",
+        summary: cancelled,
+      });
+      resolveRun(cancelled);
+      await Promise.resolve();
+    });
+    expect(
+      screen.getByRole("heading", { name: "PowerPoint creation cancelled" }),
+    ).toBeVisible();
+    expect(document.querySelector(".preview-badge")).toHaveTextContent(
+      "Cancelled",
+    );
+    const stages = screen.getByRole("list", {
+      name: "PowerPoint creation stages",
+    });
+    expect(within(stages).getByText("Plan layout").closest("li")).toHaveTextContent(
+      "cancelled",
+    );
+    expect(
+      screen.getByText(
+        "Creation was cancelled before a presentation was published.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Open presentation" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the reached checkpoint and useful failure copy when creation stops", async () => {
+    nativeMocks.startPowerPoint.mockImplementation(
+      async (_request: unknown, onEvent: (event: PowerPointEvent) => void) => {
+        onEvent({
+          type: "powerpointStarted",
+          runId: "pptx-failed",
+          totalTickets: 2,
+          totalUnits: 10,
+        });
+        onEvent({
+          type: "powerpointProgress",
+          runId: "pptx-failed",
+          step: "compose",
+          ticket: "P2 Brand",
+          index: 2,
+          totalTickets: 2,
+          stepCompleted: 1,
+          stepTotal: 2,
+          completedUnits: 6,
+          totalUnits: 10,
+          message: "Composing the second slide",
+        });
+        throw new Error("The PowerPoint sidecar stopped unexpectedly.");
+      },
+    );
+    render(<App />);
+    await settleSettings();
+
+    await switchToPowerPoint();
+    fireEvent.change(screen.getByLabelText("Root folder"), {
+      target: { value: "/powerpoint-tickets" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(360);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create PowerPoint" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector(".preview-badge")).toHaveTextContent("Failed");
+    expect(
+      screen.getAllByText("The PowerPoint sidecar stopped unexpectedly."),
+    ).toHaveLength(2);
+    const stages = screen.getByRole("list", {
+      name: "PowerPoint creation stages",
+    });
+    expect(within(stages).getByText("Compose slide").closest("li")).toHaveTextContent(
+      "failed",
+    );
+    expect(
+      screen.getByRole("heading", { name: "PowerPoint could not be created" }),
+    ).toBeVisible();
   });
 
   it("previews appearance changes and restores the saved theme on cancel", async () => {
@@ -753,7 +981,7 @@ describe("Horizon Traversal workbench", () => {
     );
   });
 
-  it("shows a live stage before resolving a successful run and starts a focused new run", async () => {
+  it("unlocks PowerPoint after asset completion and starts a focused new run", async () => {
     const successSummary: PipelineSummary = {
       ...partialSummary,
       status: "success",
@@ -784,12 +1012,40 @@ describe("Horizon Traversal workbench", () => {
     expect(screen.getByRole("button", { name: "Processing…" })).toBeDisabled();
     expect(screen.getByText("Resize video")).toBeVisible();
     expect(screen.getByLabelText("Input folder")).toBeDisabled();
+    expect(screen.getByRole("tab", { name: /PowerPoint only/ })).toBeDisabled();
 
     await act(async () => {
       resolveRun(successSummary);
       await Promise.resolve();
     });
     expect(screen.getByRole("heading", { name: "Transfer complete" })).toBeVisible();
+
+    const assetTab = screen.getByRole("tab", { name: /Asset processing/ });
+    const powerpointTab = screen.getByRole("tab", { name: /PowerPoint only/ });
+    expect(powerpointTab).toBeEnabled();
+    await switchToPowerPoint();
+    expect(powerpointTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText("Root folder")).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText("Root folder"), {
+      target: { value: "/powerpoint-tickets" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(360);
+    });
+    expect(nativeMocks.validatePowerPointSelection).toHaveBeenLastCalledWith({
+      inputPath: "/powerpoint-tickets",
+      outputPath: "/powerpoint-exports",
+    });
+    expect(screen.getByRole("button", { name: "Create PowerPoint" })).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.keyDown(powerpointTab, { key: "ArrowLeft" });
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(assetTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "Transfer complete" })).toBeVisible();
+    expect(screen.getByText("2 tickets matched")).toBeVisible();
 
     const resetButton = screen.getByRole("button", { name: "Start another run" });
     const resetIcon = resetButton.querySelector(".lucide-rotate-ccw");
@@ -802,8 +1058,8 @@ describe("Horizon Traversal workbench", () => {
     });
     expect(screen.getByLabelText("Input folder")).toHaveValue("/tickets");
     expect(screen.getByLabelText("Input folder")).toHaveFocus();
-    expect(screen.getByRole("tab", { name: /Asset processing/ })).toBeEnabled();
-    expect(screen.getByRole("tab", { name: /PowerPoint only/ })).toBeEnabled();
+    expect(assetTab).toBeEnabled();
+    expect(powerpointTab).toBeEnabled();
   });
 
   it("flushes pending events before showing an invocation failure", async () => {

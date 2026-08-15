@@ -12,6 +12,7 @@
     "build": "tsc && vite build",
     "prepare:ffmpeg": "node scripts/prepare-ffmpeg.mjs",
     "prepare:pdfium": "node scripts/prepare-pdfium.mjs",
+    "prepare:powerpoint-sidecar": "node scripts/prepare-powerpoint-sidecar.mjs",
     "prepare:source-offer": "node scripts/prepare-native-source-offer.mjs",
     "verify:source-offer": "node scripts/verify-native-source-offer.mjs",
     "verify:native": "node scripts/verify-native-assets.mjs",

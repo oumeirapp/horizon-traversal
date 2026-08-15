@@ -4,7 +4,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use pdfium_render::prelude::Pdfium;
 
-use super::collection::{collect_from_source, replace_ticket_output};
+use super::collection::{
+    category_output_path, collect_from_source, replace_ticket_output, OUTPUT_CATEGORY_ORDER,
+};
 use super::discovery::find_source_folders;
 use super::files::{remove_regular_file_if_exists, write_utf8_atomic};
 use super::images::resize_images;
@@ -209,6 +211,8 @@ fn process_ticket(
             return finish_ticket(events, ticket_name, result, started.elapsed());
         }
     };
+    let category_outputs =
+        OUTPUT_CATEGORY_ORDER.map(|source_kind| category_output_path(&ticket_output, source_kind));
 
     stage(events, &ticket_name, PipelineStage::Discover);
     ticket_log(
@@ -249,6 +253,7 @@ fn process_ticket(
     stage(events, &ticket_name, PipelineStage::Copy);
     let mut report_assets = Vec::new();
     for source in discovery.folders {
+        let category_output = category_output_path(&ticket_output, source.kind);
         ticket_log(
             events,
             &ticket_name,
@@ -257,7 +262,7 @@ fn process_ticket(
             format!("Traversing source: {}", source.path.display()),
             Some(&source.path),
         );
-        match collect_from_source(&source, &ticket_output) {
+        match collect_from_source(&source, &category_output) {
             Ok(outcome) => {
                 report_assets.extend(outcome.copied.iter().map(|asset| ReportAsset {
                     source_root: source.path.clone(),
@@ -310,20 +315,23 @@ fn process_ticket(
             Some(&ticket_output),
         );
     } else if let Some(pdfium) = pdfium {
-        let pdf_outcome = {
-            let mut on_notice = |notice| absorb_notice(events, &ticket_name, &mut result, notice);
-            convert_pdfs(&ticket_output, pdfium, &mut on_notice)
-        };
-        match pdf_outcome {
-            Ok(outcome) => absorb_processing(&mut result, outcome),
-            Err(error) => ticket_log(
-                events,
-                &ticket_name,
-                &mut result,
-                LogLevel::Error,
-                format!("PDF stage failed: {error}"),
-                Some(&ticket_output),
-            ),
+        for category_output in &category_outputs {
+            let pdf_outcome = {
+                let mut on_notice =
+                    |notice| absorb_notice(events, &ticket_name, &mut result, notice);
+                convert_pdfs(category_output, pdfium, &mut on_notice)
+            };
+            match pdf_outcome {
+                Ok(outcome) => absorb_processing(&mut result, outcome),
+                Err(error) => ticket_log(
+                    events,
+                    &ticket_name,
+                    &mut result,
+                    LogLevel::Error,
+                    format!("PDF stage failed: {error}"),
+                    Some(category_output),
+                ),
+            }
         }
     } else {
         ticket_log(
@@ -338,20 +346,23 @@ fn process_ticket(
 
     stage(events, &ticket_name, PipelineStage::Images);
     if processing_options.images {
-        let image_outcome = {
-            let mut on_notice = |notice| absorb_notice(events, &ticket_name, &mut result, notice);
-            resize_images(&ticket_output, &mut on_notice)
-        };
-        match image_outcome {
-            Ok(outcome) => absorb_processing(&mut result, outcome),
-            Err(error) => ticket_log(
-                events,
-                &ticket_name,
-                &mut result,
-                LogLevel::Error,
-                format!("Image stage failed: {error}"),
-                Some(&ticket_output),
-            ),
+        for category_output in &category_outputs {
+            let image_outcome = {
+                let mut on_notice =
+                    |notice| absorb_notice(events, &ticket_name, &mut result, notice);
+                resize_images(category_output, &mut on_notice)
+            };
+            match image_outcome {
+                Ok(outcome) => absorb_processing(&mut result, outcome),
+                Err(error) => ticket_log(
+                    events,
+                    &ticket_name,
+                    &mut result,
+                    LogLevel::Error,
+                    format!("Image stage failed: {error}"),
+                    Some(category_output),
+                ),
+            }
         }
     } else {
         ticket_log(
@@ -366,20 +377,23 @@ fn process_ticket(
 
     stage(events, &ticket_name, PipelineStage::Video);
     if processing_options.video {
-        let video_outcome = {
-            let mut on_notice = |notice| absorb_notice(events, &ticket_name, &mut result, notice);
-            resize_videos(&ticket_output, media_tools, &mut on_notice)
-        };
-        match video_outcome {
-            Ok(outcome) => absorb_processing(&mut result, outcome),
-            Err(error) => ticket_log(
-                events,
-                &ticket_name,
-                &mut result,
-                LogLevel::Error,
-                format!("Video stage failed: {error}"),
-                Some(&ticket_output),
-            ),
+        for category_output in &category_outputs {
+            let video_outcome = {
+                let mut on_notice =
+                    |notice| absorb_notice(events, &ticket_name, &mut result, notice);
+                resize_videos(category_output, media_tools, &mut on_notice)
+            };
+            match video_outcome {
+                Ok(outcome) => absorb_processing(&mut result, outcome),
+                Err(error) => ticket_log(
+                    events,
+                    &ticket_name,
+                    &mut result,
+                    LogLevel::Error,
+                    format!("Video stage failed: {error}"),
+                    Some(category_output),
+                ),
+            }
         }
     } else {
         ticket_log(

@@ -18,24 +18,35 @@ import {
   SettingsDialog,
 } from "./components/SettingsDialog";
 import {
+  cancelPowerPoint,
   loadSettings,
   openLastOutput,
+  openPowerPointOutput,
   saveSettings,
   startPipeline,
+  startPowerPoint,
+  validatePowerPointSelection,
   validateSelection,
   type AppSettings,
   type AppTheme,
   type PipelineEvent,
   type PipelineStage,
+  type PowerPointEvent,
+  type PowerPointRequest,
+  type PowerPointStep,
   type ProcessingOptions,
   type SelectionRequest,
   type SelectionSummary,
   type ValidationIssue,
 } from "./lib/native";
 import {
+  createInitialPowerPointRunState,
+  powerPointRunReducer,
+  type PowerPointRunState,
+} from "./lib/powerpoint-state";
+import {
   createInitialRunState,
   runReducer,
-  type RunLogEntry,
   type RunPhase,
   type StageIssueCounts,
   type TicketProgress,
@@ -43,14 +54,13 @@ import {
 import "./App.css";
 
 type WorkflowMode = "assets" | "powerpoint";
-type AssetStageId = PipelineStage | "pptx";
-type AssetProcessOption = keyof ProcessingOptions | "pptx";
+type AssetStageId = PipelineStage;
+type AssetProcessOption = keyof ProcessingOptions;
 
 interface AssetStage {
   id: AssetStageId;
   label: string;
   short: string;
-  unavailable?: boolean;
 }
 
 const STAGES: AssetStage[] = [
@@ -60,24 +70,12 @@ const STAGES: AssetStage[] = [
   { id: "images", label: "Resize images", short: "Images" },
   { id: "video", label: "Resize video", short: "Video" },
   { id: "report", label: "Write report", short: "Report" },
-  {
-    id: "pptx",
-    label: "Create PowerPoint",
-    short: "PowerPoint",
-    unavailable: true,
-  },
 ];
 
 const DEFAULT_PROCESSING_OPTIONS: ProcessingOptions = {
   pdf: true,
   images: true,
   video: true,
-};
-
-const NO_PROCESSING_OPTIONS: ProcessingOptions = {
-  pdf: false,
-  images: false,
-  video: false,
 };
 
 function applyTheme(theme: AppTheme) {
@@ -108,12 +106,6 @@ const PROCESSING_OPTION_CONTROLS: Array<{
     detail: "Resize",
     accessibleLabel: "Optimize video",
   },
-  {
-    id: "pptx",
-    label: "PPTX",
-    detail: "Unavailable",
-    accessibleLabel: "Create PPTX",
-  },
 ];
 
 interface ValidationState {
@@ -136,13 +128,11 @@ const STAGE_OPTION: Partial<
   pdf: "pdf",
   images: "images",
   video: "video",
-  pptx: "pptx",
 };
 
-function selectedStages(options: ProcessingOptions, pptx: boolean) {
+function selectedStages(options: ProcessingOptions) {
   return STAGES.filter((stage) => {
     const option = STAGE_OPTION[stage.id];
-    if (option === "pptx") return pptx;
     return option === undefined || options[option];
   });
 }
@@ -150,6 +140,10 @@ function selectedStages(options: ProcessingOptions, pptx: boolean) {
 function requestKey(request: SelectionRequest) {
   const { pdf, images, video } = request.processingOptions;
   return `${request.inputPath}\u0000${request.outputPath}\u0000${request.ticketFilter}\u0000${Number(pdf)}${Number(images)}${Number(video)}`;
+}
+
+function powerPointRequestKey(request: PowerPointRequest) {
+  return `${request.inputPath}\u0000${request.outputPath}`;
 }
 
 function nativeErrorMessage(error: unknown) {
@@ -236,6 +230,51 @@ function useSelectionValidation(
   return state;
 }
 
+function usePowerPointValidation(
+  request: PowerPointRequest,
+  paused: boolean,
+): ValidationState {
+  const [state, setState] = useState<ValidationState>(initialValidation);
+  const versionRef = useRef(0);
+  const key = powerPointRequestKey(request);
+  const { inputPath, outputPath } = request;
+
+  useEffect(() => {
+    versionRef.current += 1;
+    const version = versionRef.current;
+    if (paused) {
+      setState(initialValidation);
+      return;
+    }
+    if (inputPath.trim() === "" || outputPath.trim() === "") {
+      setState({ ...initialValidation, key });
+      return;
+    }
+
+    setState({ status: "pending", key, summary: null, error: null });
+    const timer = window.setTimeout(() => {
+      void validatePowerPointSelection({ inputPath, outputPath })
+        .then((summary) => {
+          if (versionRef.current !== version) return;
+          setState({ status: "ready", key, summary, error: null });
+        })
+        .catch((error: unknown) => {
+          if (versionRef.current !== version) return;
+          setState({
+            status: "error",
+            key,
+            summary: null,
+            error: nativeErrorMessage(error),
+          });
+        });
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [inputPath, key, outputPath, paused]);
+
+  return state;
+}
+
 function useBatchedEvents(
   dispatch: Dispatch<Parameters<typeof runReducer>[1]>,
   generationRef: MutableRefObject<number>,
@@ -284,6 +323,76 @@ function useBatchedEvents(
 
   const enqueue = useCallback(
     (event: PipelineEvent, generation: number) => {
+      queueRef.current.push({ event, generation });
+      if (frameRef.current !== null) return;
+      if (typeof window.requestAnimationFrame === "function") {
+        frameRef.current = {
+          id: window.requestAnimationFrame(() => flush(generationRef.current)),
+          animationFrame: true,
+        };
+      } else {
+        frameRef.current = {
+          id: window.setTimeout(() => flush(generationRef.current), 16),
+          animationFrame: false,
+        };
+      }
+    },
+    [flush, generationRef],
+  );
+
+  return useMemo(() => ({ enqueue, flush }), [enqueue, flush]);
+}
+
+function useBatchedPowerPointEvents(
+  dispatch: Dispatch<Parameters<typeof powerPointRunReducer>[1]>,
+  generationRef: MutableRefObject<number>,
+) {
+  const queueRef = useRef<Array<{ event: PowerPointEvent; generation: number }>>(
+    [],
+  );
+  const frameRef = useRef<{ id: number; animationFrame: boolean } | null>(null);
+  const mountedRef = useRef(true);
+
+  const flush = useCallback(
+    (generation: number) => {
+      const frame = frameRef.current;
+      if (frame !== null) {
+        if (frame.animationFrame) window.cancelAnimationFrame(frame.id);
+        else window.clearTimeout(frame.id);
+        frameRef.current = null;
+      }
+
+      const events = queueRef.current
+        .splice(0)
+        .filter(
+          (queued) =>
+            queued.generation === generation &&
+            queued.generation === generationRef.current,
+        )
+        .map((queued) => queued.event);
+      if (mountedRef.current && events.length > 0) {
+        dispatch({ type: "events", events });
+      }
+    },
+    [dispatch, generationRef],
+  );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const frame = frameRef.current;
+      if (frame !== null) {
+        if (frame.animationFrame) window.cancelAnimationFrame(frame.id);
+        else window.clearTimeout(frame.id);
+      }
+      frameRef.current = null;
+      queueRef.current = [];
+    };
+  }, []);
+
+  const enqueue = useCallback(
+    (event: PowerPointEvent, generation: number) => {
       queueRef.current.push({ event, generation });
       if (frameRef.current !== null) return;
       if (typeof window.requestAnimationFrame === "function") {
@@ -388,7 +497,7 @@ function AssetRoute({
 }) {
   const activeIndex = stagePosition(stage);
   const recordedErrorCount = stages.reduce((total, item) => {
-    const issues = item.id === "pptx" ? undefined : stageIssues?.[item.id];
+    const issues = stageIssues?.[item.id];
     return total + (issues?.errors ?? 0);
   }, 0);
   return (
@@ -399,7 +508,7 @@ function AssetRoute({
     >
       {stages.map((item, index) => {
         const stageIndex = stagePosition(item.id);
-        const issues = item.id === "pptx" ? undefined : stageIssues?.[item.id];
+        const issues = stageIssues?.[item.id];
         const warnings = issues?.warnings ?? 0;
         const errors = issues?.errors ?? 0;
         const issueCount = warnings + errors;
@@ -417,9 +526,7 @@ function AssetRoute({
           (phase === "success" && ticketStatus === null) ||
           stageIndex < activeIndex ||
           (ticketStatus !== null && stageIndex === activeIndex);
-        const state = item.unavailable
-          ? "warning"
-          : failed
+        const state = failed
             ? "failed"
             : errors > 0 || fallbackPartialIssue
               ? "issue"
@@ -430,10 +537,7 @@ function AssetRoute({
                   : current
                     ? "active"
                     : "pending";
-        const issueDescription =
-          item.unavailable
-            ? "unavailable; no presentation will be created"
-            : fallbackPartialIssue
+        const issueDescription = fallbackPartialIssue
             ? failedFiles > 0
               ? `${failedFiles} failed file${failedFiles === 1 ? "" : "s"}`
               : "errors reported"
@@ -466,7 +570,7 @@ function AssetRoute({
                   <path d="m3 8 3 3 7-7" />
                 </svg>
               ) : String(index + 1).padStart(2, "0")}
-              {issueCount === 0 || item.unavailable ? null : (
+              {issueCount === 0 ? null : (
                 <span className="asset-route__issue-count">{issueCount}</span>
               )}
             </span>
@@ -610,29 +714,133 @@ function RunResult({
   );
 }
 
-const POWERPOINT_CHECKPOINTS = [
-  "Collect assets",
-  "Compose layout",
-  "Place content",
-  "Finalize slide",
-] as const;
+const POWERPOINT_CHECKPOINTS: ReadonlyArray<{
+  id: PowerPointStep;
+  label: string;
+}> = [
+  { id: "inspect", label: "Inspect assets" },
+  { id: "video", label: "Prepare videos" },
+  { id: "layout", label: "Plan layout" },
+  { id: "compose", label: "Compose slide" },
+  { id: "save", label: "Save presentation" },
+];
 
-const EMPTY_POWERPOINT_LOGS: RunLogEntry[] = [];
+const POWERPOINT_STEP_LABELS = Object.fromEntries(
+  POWERPOINT_CHECKPOINTS.map(({ id, label }) => [id, label]),
+) as Record<PowerPointStep, string>;
+
+function PowerPointResult({
+  run,
+  opening,
+  onOpen,
+  onReset,
+}: {
+  run: PowerPointRunState;
+  opening: boolean;
+  onOpen: () => void;
+  onReset: () => void;
+}) {
+  if (["idle", "running", "cancelling"].includes(run.phase)) return null;
+  const generated =
+    run.summary?.outputPath !== null && run.summary?.outputPath !== undefined;
+  const title =
+    run.phase === "success"
+      ? "PowerPoint ready"
+      : run.phase === "partialSuccess"
+        ? "PowerPoint ready with warnings"
+        : run.phase === "cancelled"
+          ? "PowerPoint creation cancelled"
+          : "PowerPoint could not be created";
+  const copy =
+    run.fatalError ??
+    (run.phase === "cancelled"
+      ? "No in-progress presentation was published. You can start again with the same folder."
+      : generated
+        ? "The combined presentation and its layout report are available in your PowerPoint output folder."
+        : "Review the activity log, then start another presentation.");
+
+  return (
+    <section
+      className={`run-result run-result--${run.phase}`}
+      aria-labelledby="powerpoint-result-heading"
+      tabIndex={-1}
+    >
+      <div className="run-result__mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="24" height="24">
+          {generated ? (
+            <path d="m5 12 4 4L19 6" />
+          ) : (
+            <>
+              <path d="m7 7 10 10" />
+              <path d="M17 7 7 17" />
+            </>
+          )}
+        </svg>
+      </div>
+      <div className="run-result__body">
+        <h2 id="powerpoint-result-heading">{title}</h2>
+        {run.summary === null ? null : (
+          <p className="run-result__summary">
+            {run.summary.slidesCreated} slides · {run.summary.blankSlides} blank ·{" "}
+            {run.summary.warnings} warnings · {formatDuration(run.summary.elapsedMs)}
+          </p>
+        )}
+        <p className="run-result__copy">{copy}</p>
+      </div>
+      <div className="run-result__actions">
+        {generated ? (
+          <button
+            type="button"
+            className="button button--primary run-result__open"
+            onClick={onOpen}
+            disabled={opening}
+          >
+            <FolderIcon /> {opening ? "Opening…" : "Open presentation"}
+          </button>
+        ) : null}
+        <button type="button" className="run-result__reset" onClick={onReset}>
+          <ResetIcon />
+          <span>Start another presentation</span>
+        </button>
+      </div>
+    </section>
+  );
+}
 
 function PowerPointWorkspace({
   inputPath,
+  inputRef,
   validation,
+  run,
+  canStart,
+  locked,
+  opening,
+  openError,
   settingsLoadingError,
   dialogError,
   onInputChange,
   onChooseFolder,
+  onStart,
+  onCancel,
+  onOpen,
+  onReset,
 }: {
   inputPath: string;
+  inputRef: MutableRefObject<HTMLInputElement | null>;
   validation: ValidationState;
+  run: PowerPointRunState;
+  canStart: boolean;
+  locked: boolean;
+  opening: boolean;
+  openError: string | null;
   settingsLoadingError: string | null;
   dialogError: string | null;
   onInputChange: (value: string) => void;
   onChooseFolder: () => void;
+  onStart: () => void;
+  onCancel: () => void;
+  onOpen: () => void;
+  onReset: () => void;
 }) {
   const summary = validation.summary;
   const issues = summary?.issues ?? [];
@@ -644,6 +852,59 @@ function PowerPointWorkspace({
   const generalIssue = issues.find((issue) => issue.field === "general");
   const ticketCount = summary?.valid ? summary.tickets.length : 0;
   const firstTicket = summary?.valid ? summary.tickets[0]?.name : undefined;
+  const finalizingPresentation = run.currentStep === "save";
+  const currentTicket = finalizingPresentation
+    ? "Combined presentation"
+    : run.currentTicket ?? firstTicket;
+  const totalTickets = run.totalTickets || ticketCount;
+  const currentIndex = run.currentIndex || (totalTickets > 0 ? 1 : 0);
+  const activeStepIndex = run.currentStep === null
+    ? -1
+    : POWERPOINT_CHECKPOINTS.findIndex(({ id }) => id === run.currentStep);
+  const runFinished = !["idle", "running", "cancelling"].includes(run.phase);
+  const presentationPublished =
+    (run.phase === "success" || run.phase === "partialSuccess") &&
+    Boolean(run.summary?.outputPath);
+  const progress = presentationPublished
+    ? 100
+    : run.totalUnits > 0
+      ? Math.min(100, Math.round((run.completedUnits / run.totalUnits) * 100))
+      : 0;
+  const processHeading =
+    currentTicket ??
+    (run.phase === "failed"
+      ? "Presentation stopped"
+      : run.phase === "cancelled"
+        ? "Creation cancelled"
+        : runFinished
+          ? "Presentation complete"
+          : "Ticket preview");
+  const processMessage =
+    run.phase === "cancelled"
+      ? "Creation was cancelled before a presentation was published."
+      : run.phase === "failed"
+        ? run.fatalError ??
+          "Creation stopped before a presentation could be published."
+        : run.message ??
+          (run.phase === "success"
+            ? "The presentation and layout report are ready."
+            : run.phase === "partialSuccess"
+              ? "The presentation is ready with warnings to review."
+              : ticketCount > 0
+                ? "Ready to inspect ticket assets."
+                : "Choose a valid root folder to prepare the presentation.");
+  const progressBadge =
+    run.phase === "running"
+      ? `${progress}%`
+      : run.phase === "cancelling"
+        ? "Cancelling"
+        : run.phase === "failed"
+          ? "Failed"
+          : run.phase === "cancelled"
+            ? "Cancelled"
+            : runFinished
+              ? "Finished"
+              : "Ready";
 
   return (
     <div className="workspace workspace--powerpoint">
@@ -666,14 +927,16 @@ function PowerPointWorkspace({
             >
               <FolderIcon />
               <input
+                ref={inputRef}
                 id="powerpoint-input-path"
                 value={inputPath}
                 onChange={(event) => onInputChange(event.target.value)}
                 placeholder="Path to ticket folders"
                 aria-invalid={inputIssue !== undefined || selectionIssue !== undefined}
                 aria-describedby="powerpoint-input-help"
+                disabled={locked}
               />
-              <button type="button" onClick={onChooseFolder}>
+              <button type="button" onClick={onChooseFolder} disabled={locked}>
                 Choose folder
               </button>
             </div>
@@ -714,12 +977,39 @@ function PowerPointWorkspace({
           ))}
 
           <div className="start-row powerpoint-start-row">
-            <button type="button" className="button button--primary" disabled>
-              <span>Create PowerPoint</span>
-              <ArrowIcon />
-            </button>
-            <p>Coming soon · this preview does not create a presentation.</p>
+            {run.phase === "running" || run.phase === "cancelling" ? (
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={onCancel}
+                disabled={run.phase === "cancelling" || run.runId === null}
+              >
+                <span>{run.phase === "cancelling" ? "Cancelling…" : "Cancel creation"}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="button button--primary"
+                onClick={onStart}
+                disabled={!canStart}
+              >
+                <span>Create PowerPoint</span>
+                <ArrowIcon />
+              </button>
+            )}
+            <p>
+              {canStart
+                ? "Ready. The combined deck will be saved to the PowerPoint output folder."
+                : run.phase === "running" || run.phase === "cancelling"
+                  ? "Keep this window open while the presentation is created."
+                  : runFinished
+                    ? "Start another presentation to choose a new source."
+                    : "A valid ticket root is required before creation."}
+            </p>
           </div>
+          {run.cancelError === null ? null : (
+            <p className="form-alert" role="alert">{run.cancelError}</p>
+          )}
         </div>
       </section>
 
@@ -727,46 +1017,91 @@ function PowerPointWorkspace({
         <div className="run-card__heading">
           <div>
             <p className="section-kicker">02 · Process</p>
-            <h2 id="powerpoint-process-heading">{firstTicket ?? "Ticket preview"}</h2>
+            <h2 id="powerpoint-process-heading">{processHeading}</h2>
             <p>
-              {ticketCount > 0
-                ? `Slide 1 of ${ticketCount} · Preview`
-                : "Choose a valid root folder to preview the first slide."}
+              {finalizingPresentation && totalTickets > 0
+                ? `${totalTickets} ticket ${totalTickets === 1 ? "slide" : "slides"} prepared`
+                : totalTickets > 0
+                ? `Ticket ${Math.min(currentIndex, totalTickets)} of ${totalTickets}`
+                : "Waiting for a ticket root"}
             </p>
           </div>
-          <span className="preview-badge">Preview only</span>
+          <span className={`preview-badge${run.phase === "running" ? " is-running" : ""}`}>
+            {progressBadge}
+          </span>
         </div>
 
-        <div className="slide-storyboard">
-          <div className="slide-storyboard__frame" aria-hidden="true">
-            <span>01</span>
-            <i />
-            <i />
-            <i />
-          </div>
-          <div className="slide-storyboard__body">
-            <p className="slide-storyboard__status">Waiting to collect approved assets</p>
-            <p className="slide-storyboard__copy">
-              Ticket content, layout, and export details will appear here when
-              PowerPoint creation is implemented.
+        <div className="powerpoint-progress-card">
+          <div className="powerpoint-progress-card__summary">
+            <span className="powerpoint-progress-card__step">
+              {run.currentStep === null
+                ? "Presentation queue"
+                : POWERPOINT_STEP_LABELS[run.currentStep]}
+            </span>
+            <strong>{processMessage}</strong>
+            <p>
+              {run.currentStep === null || run.stepTotal === 0
+                ? `${progress}% complete`
+                : `${run.stepCompleted} of ${run.stepTotal} complete in this stage`}
             </p>
-            <ol className="powerpoint-checkpoints" aria-label="PowerPoint creation stages">
-              {POWERPOINT_CHECKPOINTS.map((checkpoint) => (
-                <li key={checkpoint}>
-                  <span aria-hidden="true" />
-                  {checkpoint}
-                </li>
-              ))}
-            </ol>
           </div>
+          <div
+            className="powerpoint-progress"
+            role="progressbar"
+            aria-label="PowerPoint creation progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progress}
+          >
+            <span style={{ width: `${progress}%` }} />
+          </div>
+            <ol className="powerpoint-checkpoints" aria-label="PowerPoint creation stages">
+              {POWERPOINT_CHECKPOINTS.map((checkpoint, index) => {
+                const state =
+                  presentationPublished
+                    ? "complete"
+                    : index < activeStepIndex
+                      ? "complete"
+                      : index === activeStepIndex
+                        ? run.phase === "failed"
+                          ? "failed"
+                          : run.phase === "cancelled"
+                            ? "cancelled"
+                            : run.phase === "running" || run.phase === "cancelling"
+                              ? "active"
+                              : "pending"
+                        : "pending";
+                return (
+                <li
+                  className={`powerpoint-checkpoints__item powerpoint-checkpoints__item--${state}`}
+                  key={checkpoint.id}
+                  aria-current={state === "active" ? "step" : undefined}
+                >
+                  <span aria-hidden="true" />
+                  <span>{checkpoint.label}</span>
+                  <small>{state}</small>
+                </li>
+                );
+              })}
+            </ol>
         </div>
       </section>
 
+      <PowerPointResult
+        run={run}
+        opening={opening}
+        onOpen={onOpen}
+        onReset={onReset}
+      />
+      {openError === null ? null : (
+        <p className="form-alert output-alert" role="alert">{openError}</p>
+      )}
+
       <ActivityPanel
-        logs={EMPTY_POWERPOINT_LOGS}
+        logs={run.logs}
         kicker="Presentation record"
         heading="PowerPoint activity"
-        emptyMessage="Ticket and slide activity will appear here when PowerPoint creation is available."
+        emptyMessage="Ticket and slide activity will appear here during creation."
       />
     </div>
   );
@@ -785,16 +1120,31 @@ function App() {
   const [processingOptions, setProcessingOptions] = useState<ProcessingOptions>(
     DEFAULT_PROCESSING_OPTIONS,
   );
-  const [pptxEnabled, setPptxEnabled] = useState(false);
   const [run, dispatch] = useReducer(runReducer, undefined, createInitialRunState);
+  const [powerPointRun, dispatchPowerPoint] = useReducer(
+    powerPointRunReducer,
+    undefined,
+    createInitialPowerPointRunState,
+  );
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
   const [openingOutput, setOpeningOutput] = useState(false);
+  const [powerPointOpenError, setPowerPointOpenError] = useState<string | null>(null);
+  const [openingPowerPoint, setOpeningPowerPoint] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const powerPointInputRef = useRef<HTMLInputElement>(null);
   const runGenerationRef = useRef(0);
+  const powerPointGenerationRef = useRef(0);
   const { enqueue: enqueueEvent, flush: flushEvents } = useBatchedEvents(
     dispatch,
     runGenerationRef,
+  );
+  const {
+    enqueue: enqueuePowerPointEvent,
+    flush: flushPowerPointEvents,
+  } = useBatchedPowerPointEvents(
+    dispatchPowerPoint,
+    powerPointGenerationRef,
   );
   const assetOutputPath = settings?.defaultOutputPath ?? "";
   const powerpointOutputPath = settings?.powerpointOutputPath ?? "";
@@ -811,26 +1161,28 @@ function App() {
     () => ({
       inputPath: powerpointInputPath,
       outputPath: powerpointOutputPath,
-      ticketFilter: "",
-      processingOptions: NO_PROCESSING_OPTIONS,
     }),
     [powerpointInputPath, powerpointOutputPath],
   );
   const running = run.phase === "running";
-  const configurationLocked = run.phase !== "idle";
+  const powerPointRunning =
+    powerPointRun.phase === "running" || powerPointRun.phase === "cancelling";
+  const workflowSwitchLocked = running || powerPointRunning;
+  const assetConfigurationLocked = run.phase !== "idle" || powerPointRunning;
+  const powerPointConfigurationLocked =
+    powerPointRun.phase !== "idle" || running;
   const validation = useSelectionValidation(
     request,
-    configurationLocked || workflow !== "assets",
-    workflow !== "assets",
+    assetConfigurationLocked || workflow !== "assets",
+    workflow !== "assets" && run.phase === "idle",
   );
-  const powerpointValidation = useSelectionValidation(
+  const powerpointValidation = usePowerPointValidation(
     powerpointRequest,
-    workflow !== "powerpoint",
-    workflow !== "powerpoint",
+    powerPointConfigurationLocked || workflow !== "powerpoint",
   );
   const key = requestKey(request);
   const currentValidation = validation.key === key ? validation : initialValidation;
-  const powerpointKey = requestKey(powerpointRequest);
+  const powerpointKey = powerPointRequestKey(powerpointRequest);
   const currentPowerpointValidation =
     powerpointValidation.key === powerpointKey
       ? powerpointValidation
@@ -845,9 +1197,14 @@ function App() {
   const generalIssue = issues.find((issue) => issue.field === "general");
   const canStart =
     workflow === "assets" &&
-    run.phase === "idle" &&
+    !assetConfigurationLocked &&
     currentValidation.status === "ready" &&
     summary?.valid === true;
+  const canStartPowerPoint =
+    workflow === "powerpoint" &&
+    !powerPointConfigurationLocked &&
+    currentPowerpointValidation.status === "ready" &&
+    currentPowerpointValidation.summary?.valid === true;
 
   const liveTotals = useMemo(() => {
     let completedTickets = 0;
@@ -876,7 +1233,7 @@ function App() {
   const currentTicketProgress = run.tickets.find(
     (ticket) => ticket.name === run.currentTicket,
   );
-  const activeStages = selectedStages(processingOptions, pptxEnabled);
+  const activeStages = selectedStages(processingOptions);
 
   useEffect(() => {
     let active = true;
@@ -931,7 +1288,7 @@ function App() {
   }
 
   function changeWorkflow(value: string) {
-    if (configurationLocked) return;
+    if (workflowSwitchLocked) return;
     if (value === "assets" || value === "powerpoint") {
       setDialogError(null);
       setWorkflow(value);
@@ -1007,6 +1364,64 @@ function App() {
     }
   }
 
+  async function handleStartPowerPoint() {
+    if (!canStartPowerPoint) return;
+    setPowerPointOpenError(null);
+    const generation = powerPointGenerationRef.current + 1;
+    powerPointGenerationRef.current = generation;
+    dispatchPowerPoint({ type: "start", startedAt: performance.now() });
+    try {
+      const result = await startPowerPoint(powerpointRequest, (event) => {
+        if (powerPointGenerationRef.current === generation) {
+          enqueuePowerPointEvent(event, generation);
+          if (event.type === "powerpointCompleted") {
+            flushPowerPointEvents(generation);
+          }
+        }
+      });
+      if (powerPointGenerationRef.current !== generation) return;
+      flushPowerPointEvents(generation);
+      dispatchPowerPoint({
+        type: "resolved",
+        summary: result,
+        finishedAt: performance.now(),
+      });
+    } catch (error) {
+      if (powerPointGenerationRef.current !== generation) return;
+      flushPowerPointEvents(generation);
+      dispatchPowerPoint({
+        type: "rejected",
+        message: nativeErrorMessage(error),
+        finishedAt: performance.now(),
+      });
+    }
+  }
+
+  async function handleCancelPowerPoint() {
+    if (powerPointRun.phase !== "running" || powerPointRun.runId === null) return;
+    dispatchPowerPoint({ type: "cancelRequested" });
+    try {
+      await cancelPowerPoint(powerPointRun.runId);
+    } catch (error) {
+      dispatchPowerPoint({
+        type: "cancelRejected",
+        message: nativeErrorMessage(error),
+      });
+    }
+  }
+
+  async function handleOpenPowerPoint() {
+    setPowerPointOpenError(null);
+    setOpeningPowerPoint(true);
+    try {
+      await openPowerPointOutput();
+    } catch (error) {
+      setPowerPointOpenError(nativeErrorMessage(error));
+    } finally {
+      setOpeningPowerPoint(false);
+    }
+  }
+
   function handleNewRun() {
     runGenerationRef.current += 1;
     dispatch({ type: "reset" });
@@ -1014,20 +1429,34 @@ function App() {
     queueMicrotask(() => inputRef.current?.focus());
   }
 
-  function setProcessingOption(
-    option: AssetProcessOption,
-    enabled: boolean,
-  ) {
-    if (option === "pptx") {
-      setPptxEnabled(enabled);
-      return;
-    }
+  function handleNewPowerPointRun() {
+    powerPointGenerationRef.current += 1;
+    dispatchPowerPoint({ type: "reset" });
+    setPowerPointOpenError(null);
+    queueMicrotask(() => powerPointInputRef.current?.focus());
+  }
+
+  function setProcessingOption(option: AssetProcessOption, enabled: boolean) {
     setProcessingOptions((current) => ({ ...current, [option]: enabled }));
   }
 
   const statusLabel =
     workflow === "powerpoint"
-      ? "PowerPoint preview"
+      ? powerPointRun.phase === "running"
+        ? "Creating PowerPoint"
+        : powerPointRun.phase === "cancelling"
+          ? "Cancelling PowerPoint"
+          : powerPointRun.phase === "success"
+            ? "Presentation ready"
+            : powerPointRun.phase === "partialSuccess"
+              ? "Review presentation"
+              : powerPointRun.phase === "failed"
+                ? "Creation failed"
+                : powerPointRun.phase === "cancelled"
+                  ? "Creation cancelled"
+                  : currentPowerpointValidation.summary?.valid
+                    ? "Ready to create"
+                    : "Set up presentation"
       : run.phase === "running"
       ? "Transfer in progress"
       : run.phase === "success"
@@ -1041,7 +1470,11 @@ function App() {
               : "Set up transfer";
   const runAnnouncement =
     workflow === "powerpoint"
-      ? "PowerPoint preview. Choose a ticket root to inspect the future slide preview."
+      ? powerPointRun.phase === "running" || powerPointRun.phase === "cancelling"
+        ? `${powerPointRun.currentTicket ?? "Preparing the presentation"}. ${
+            powerPointRun.message ?? "Waiting for the next update"
+          }`
+        : statusLabel
       : run.phase === "running"
       ? `${run.currentTicket ?? "Preparing tickets"}. ${
           run.currentStage === null
@@ -1055,6 +1488,7 @@ function App() {
           : run.phase === "failed"
             ? "Transfer failed."
             : statusLabel;
+  const statusPhase = workflow === "powerpoint" ? powerPointRun.phase : run.phase;
 
   return (
     <main className="app-shell">
@@ -1069,7 +1503,7 @@ function App() {
           </div>
         </div>
         <div className="app-header__actions">
-          <div className={`app-status app-status--${run.phase}`} role="status">
+          <div className={`app-status app-status--${statusPhase}`} role="status">
             <span aria-hidden="true" />
             {statusLabel}
           </div>
@@ -1097,11 +1531,15 @@ function App() {
         onValueChange={changeWorkflow}
       >
         <div className="workflow-switch-shell">
-          <Tabs.List className="workflow-switch" aria-label="Workflow mode">
+          <Tabs.List
+            className="workflow-switch"
+            aria-label="Workflow mode"
+            data-active-tab={workflow}
+          >
             <Tabs.Trigger
               className="workflow-switch__tab"
               value="assets"
-              disabled={configurationLocked && workflow !== "assets"}
+              disabled={workflowSwitchLocked && workflow !== "assets"}
             >
               <span className="workflow-switch__mark" aria-hidden="true">
                 Assets
@@ -1114,14 +1552,14 @@ function App() {
             <Tabs.Trigger
               className="workflow-switch__tab"
               value="powerpoint"
-              disabled={configurationLocked && workflow !== "powerpoint"}
+              disabled={workflowSwitchLocked && workflow !== "powerpoint"}
             >
               <span className="workflow-switch__mark" aria-hidden="true">
                 PPTX
               </span>
               <span className="workflow-switch__copy">
                 <strong>PowerPoint only</strong>
-                <small>One ticket per future slide</small>
+                <small>Create your presentation</small>
               </span>
             </Tabs.Trigger>
           </Tabs.List>
@@ -1148,11 +1586,15 @@ function App() {
                   value={inputPath}
                   onChange={(event) => setInputPath(event.target.value)}
                   placeholder="Path to ticket folders"
-                  disabled={configurationLocked}
+                  disabled={assetConfigurationLocked}
                   aria-invalid={inputIssue !== undefined}
                   aria-describedby="input-help"
                 />
-                <button type="button" onClick={() => void chooseInputFolder()} disabled={configurationLocked}>
+                <button
+                  type="button"
+                  onClick={() => void chooseInputFolder()}
+                  disabled={assetConfigurationLocked}
+                >
                   Choose folder
                 </button>
               </div>
@@ -1171,7 +1613,7 @@ function App() {
                   value={ticketFilter}
                   onChange={(event) => setTicketFilter(event.target.value)}
                   placeholder="All immediate ticket folders"
-                  disabled={configurationLocked}
+                  disabled={assetConfigurationLocked}
                   aria-invalid={filterIssue !== undefined}
                   aria-describedby="filter-help"
                 />
@@ -1203,7 +1645,7 @@ function App() {
               </div>
             </div>
 
-            <fieldset className="processing-options" disabled={configurationLocked}>
+            <fieldset className="processing-options" disabled={assetConfigurationLocked}>
               <legend className="sr-only">Processing steps</legend>
               <div className="processing-options__intro">
                 <strong>Processing steps</strong>
@@ -1213,20 +1655,13 @@ function App() {
               </div>
               <div className="processing-options__controls">
                 {PROCESSING_OPTION_CONTROLS.map((option) => {
-                  const enabled =
-                    option.id === "pptx"
-                      ? pptxEnabled
-                      : processingOptions[option.id];
+                  const enabled = processingOptions[option.id];
                   return (
                     <label className="processing-option" key={option.id}>
                       <span className="processing-option__copy">
                         <strong>{option.label}</strong>
                         <small>
-                          {enabled
-                            ? option.detail
-                            : option.id === "pptx"
-                              ? "Off"
-                              : "Copy only"}
+                          {enabled ? option.detail : "Copy only"}
                         </small>
                       </span>
                       <input
@@ -1235,7 +1670,7 @@ function App() {
                         onChange={(event) =>
                           setProcessingOption(option.id, event.target.checked)
                         }
-                        disabled={configurationLocked}
+                        disabled={assetConfigurationLocked}
                         aria-label={option.accessibleLabel}
                         aria-describedby="processing-options-help"
                       />
@@ -1247,13 +1682,6 @@ function App() {
                 })}
               </div>
             </fieldset>
-
-            {pptxEnabled ? (
-              <p className="form-warning powerpoint-unavailable" role="status">
-                PPTX is not available yet. Selected asset processes will run normally,
-                but no presentation will be created.
-              </p>
-            ) : null}
 
             {dialogError === null ? null : <p className="form-alert" role="alert">{dialogError}</p>}
             {settingsLoadingError === null ? null : (
@@ -1288,7 +1716,7 @@ function App() {
                   ? "Ready. Existing ticket outputs will be replaced safely."
                   : running
                     ? "Keep this window open while assets move."
-                    : configurationLocked
+                    : assetConfigurationLocked
                       ? "Choose Start another run to prepare another transfer."
                       : "A valid route is required before processing."}
               </p>
@@ -1381,11 +1809,21 @@ function App() {
         <Tabs.Content className="workflow-content" value="powerpoint">
           <PowerPointWorkspace
             inputPath={powerpointInputPath}
+            inputRef={powerPointInputRef}
             validation={currentPowerpointValidation}
+            run={powerPointRun}
+            canStart={canStartPowerPoint}
+            locked={powerPointConfigurationLocked}
+            opening={openingPowerPoint}
+            openError={powerPointOpenError}
             settingsLoadingError={settingsLoadingError}
             dialogError={dialogError}
             onInputChange={setPowerpointInputPath}
             onChooseFolder={() => void choosePowerpointFolder()}
+            onStart={() => void handleStartPowerPoint()}
+            onCancel={() => void handleCancelPowerPoint()}
+            onOpen={() => void handleOpenPowerPoint()}
+            onReset={handleNewPowerPointRun}
           />
         </Tabs.Content>
       </Tabs.Root>

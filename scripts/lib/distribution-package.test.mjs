@@ -80,6 +80,21 @@ async function createFixture(targetName, artifactNames) {
     "src-tauri/binaries/licenses/windows/mingw-w64/COPYING",
     "MinGW license\n",
   );
+  await writeFixtureFile(
+    root,
+    "powerpoint-sidecar/THIRD_PARTY_NOTICES.md",
+    "PowerPoint notices\n",
+  );
+  await writeFixtureFile(
+    root,
+    "powerpoint-sidecar/requirements-bundle.txt",
+    "Pillow==11.3.0\n",
+  );
+  await writeFixtureFile(
+    root,
+    "powerpoint-sidecar/licenses/Pillow-11.3.0/LICENSE",
+    "Pillow license\n",
+  );
   return root;
 }
 
@@ -140,6 +155,9 @@ test("assembles and verifies a deterministic macOS companion distribution", asyn
     "licenses/GPL-2.0-or-later.txt",
     "licenses/windows/llvm-mingw/LICENSE.TXT",
     "licenses/windows/mingw-w64/COPYING",
+    "powerpoint/THIRD_PARTY_NOTICES.md",
+    "powerpoint/licenses/Pillow-11.3.0/LICENSE",
+    "powerpoint/requirements-bundle.txt",
   ]);
   await lstat(
     path.join(
@@ -191,7 +209,7 @@ test("assembles the Windows NSIS installer into its target-specific directory", 
     await readFile(result.artifact, "utf8"),
     "installer-0",
   );
-  assert.equal(result.fileCount, 6);
+  assert.equal(result.fileCount, 9);
   await verifyDistribution({
     root,
     targetName: "windows",

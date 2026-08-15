@@ -272,7 +272,8 @@ $InstallDirectory = Join-Path $Workspace "installed"
 $CargoTargetDirectory = Join-Path $Workspace "cargo-target"
 $InputDirectory = Join-Path $Workspace "input"
 $OutputDirectory = Join-Path $Workspace "output"
-$SourceDirectory = Join-Path $InputDirectory "P1 Packaged Smoke\Deliverables\Creative"
+$DeliverablesSourceDirectory = Join-Path $InputDirectory "P1 Packaged Smoke\Deliverables\Creative"
+$MasterSourceDirectory = Join-Path $InputDirectory "P1 Packaged Smoke\Master Files\Print"
 $ResultPath = Join-Path $Workspace "pipeline-result.json"
 $InspectionPath = Join-Path $Workspace "bundle-inspection.json"
 $RequestPath = Join-Path $Workspace "request.json"
@@ -343,7 +344,7 @@ try {
 
   $ApplicationCandidates = @(
     Get-ChildItem -LiteralPath $InstallDirectory -Filter "*.exe" -File |
-      Where-Object { $_.Name -notin @("ffmpeg.exe", "ffprobe.exe", "uninstall.exe") }
+      Where-Object { $_.Name -notin @("ffmpeg.exe", "ffprobe.exe", "powerpoint-sidecar.exe", "uninstall.exe") }
   )
   if ($ApplicationCandidates.Count -ne 1) {
     Fail "expected exactly one installed application executable, found $($ApplicationCandidates.Count)"
@@ -361,9 +362,11 @@ try {
     "--report", $InspectionPath
   ) -Description "installed bundle inspection"
 
-  New-Item -ItemType Directory -Path $SourceDirectory | Out-Null
-  Copy-Item -LiteralPath $PdfFixture -Destination (Join-Path $SourceDirectory "Brief.pdf")
-  Write-OversizedPng -Source $ImageFixture -Destination (Join-Path $SourceDirectory "Visual_2400x1500px.png")
+  New-Item -ItemType Directory -Path $DeliverablesSourceDirectory | Out-Null
+  New-Item -ItemType Directory -Path $MasterSourceDirectory | Out-Null
+  Copy-Item -LiteralPath $PdfFixture -Destination (Join-Path $DeliverablesSourceDirectory "Brief.pdf")
+  Copy-Item -LiteralPath $PdfFixture -Destination (Join-Path $MasterSourceDirectory "MasterBrief.pdf")
+  Write-OversizedPng -Source $ImageFixture -Destination (Join-Path $DeliverablesSourceDirectory "Visual_2400x1500px.png")
   Invoke-Checked -Program $SourceFfmpeg -Arguments @(
     "-hide_banner", "-loglevel", "error", "-y",
     "-f", "lavfi", "-i", "color=c=0x0c756d:s=1080x1920:r=10",
@@ -371,7 +374,7 @@ try {
     "-t", "0.2", "-shortest",
     "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
     "-c:a", "pcm_s16le",
-    (Join-Path $SourceDirectory "Clip_0.2s_1080x1920px.mp4")
+    (Join-Path $DeliverablesSourceDirectory "Clip_0.2s_1080x1920px.mp4")
   ) -Description "video-with-audio fixture generation"
 
   $Request = [ordered]@{
@@ -397,24 +400,40 @@ try {
   if ($Result.outcome -ne "passed" -or $Result.summary.status -ne "success") {
     Fail "packaged pipeline did not complete successfully"
   }
-  if ($Result.summary.copiedFiles -ne 3 -or $Result.summary.errors -ne 0) {
+  if ($Result.summary.copiedFiles -ne 4 -or $Result.summary.errors -ne 0) {
     Fail "packaged pipeline summary is unexpected: copied=$($Result.summary.copiedFiles), errors=$($Result.summary.errors)"
   }
 
   $TicketOutput = Join-Path $OutputDirectory "P1 Packaged Smoke"
-  $PdfImage = Join-Path $TicketOutput "Brief.png"
-  $VisualImage = Join-Path $TicketOutput "Visual_2400x1500px.png"
-  $OutputVideo = Join-Path $TicketOutput "Clip_0.2s_1080x1920px.mp4"
+  $MasterOutput = Join-Path $TicketOutput "Master"
+  $DeliverablesOutput = Join-Path $TicketOutput "Deliverables"
+  if (-not (Test-Path -LiteralPath $MasterOutput -PathType Container)) {
+    Fail "Master output category is missing"
+  }
+  if (-not (Test-Path -LiteralPath $DeliverablesOutput -PathType Container)) {
+    Fail "Deliverables output category is missing"
+  }
+  $MasterPdfImage = Join-Path $MasterOutput "MasterBrief.png"
+  $PdfImage = Join-Path $DeliverablesOutput "Brief.png"
+  $VisualImage = Join-Path $DeliverablesOutput "Visual_2400x1500px.png"
+  $OutputVideo = Join-Path $DeliverablesOutput "Clip_0.2s_1080x1920px.mp4"
   $Report = Join-Path $TicketOutput "report.csv"
   $AggregateReport = Join-Path $OutputDirectory "1. report.csv"
-  foreach ($OutputFile in @($PdfImage, $VisualImage, $OutputVideo, $Report, $AggregateReport)) {
+  foreach ($OutputFile in @($MasterPdfImage, $PdfImage, $VisualImage, $OutputVideo, $Report, $AggregateReport)) {
     Require-File -Path $OutputFile -Label "pipeline output"
   }
-  if (Test-Path -LiteralPath (Join-Path $TicketOutput "Brief.pdf")) {
-    Fail "PDF original remains after successful conversion"
+  if (Test-Path -LiteralPath (Join-Path $MasterOutput "MasterBrief.pdf")) {
+    Fail "Master PDF original remains after successful conversion"
+  }
+  if (Test-Path -LiteralPath (Join-Path $DeliverablesOutput "Brief.pdf")) {
+    Fail "Deliverables PDF original remains after successful conversion"
+  }
+  if (Test-Path -LiteralPath (Join-Path $TicketOutput "Brief.png")) {
+    Fail "asset was written outside its output category"
   }
 
   $InstalledFfprobe = Join-Path $InstallDirectory "ffprobe.exe"
+  Assert-ImageBounds -File $MasterPdfImage
   Assert-ImageBounds -File $PdfImage
   Assert-ImageBounds -File $VisualImage
   $VideoStream = Read-ProbeStream -Ffprobe $InstalledFfprobe -File $OutputVideo -Selector "v:0" -Entries "stream=codec_name,width,height,pix_fmt"
@@ -430,7 +449,8 @@ try {
     "Name,Ticket,Folder,Size",
     "Brief.pdf,P1,Creative,Unknown",
     "Clip.mp4,P1,Creative,0.2 sec 1080x1920",
-    "Visual.png,P1,Creative,2400x1500"
+    "Visual.png,P1,Creative,2400x1500",
+    "MasterBrief.pdf,P1,Print,Unknown"
   ) -join "`n"
   $ExpectedReport += "`n"
   $ActualReport = [IO.File]::ReadAllText($Report).Replace("`r`n", "`n")

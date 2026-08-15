@@ -58,11 +58,16 @@ test("parses FFmpeg encoder table entries", () => {
 });
 
 test("requires the schema-v2 Windows x64 target", () => {
-  const target = { platform: "windows", architecture: "x86_64" };
+  const target = {
+    platform: "windows",
+    architecture: "x86_64",
+    powerpointSidecar: { version: "0.1.0" },
+  };
   assert.equal(
     assertWindowsManifest({
       schemaVersion: 2,
       pinnedTargets: ["x86_64-pc-windows-msvc"],
+      sources: { powerpointSidecar: { version: "0.1.0" } },
       targets: { "x86_64-pc-windows-msvc": target },
     }),
     target,
@@ -115,4 +120,16 @@ test("never reads media output hashes from the Windows manifest", async () => {
   );
   assert.doesNotMatch(source, /target\.(?:ffmpeg|ffprobe)\.sha256/);
   assert.match(source, /target\.pdfium\.sha256/);
+  assert.match(source, /powerpoint-sidecar\.exe/);
+  assert.match(source, /powerpointSidecarPath, \["--version"\]/);
+  assert.match(source, /Slide template\.pptx/);
+  assert.match(source, /THIRD_PARTY_NOTICES\.md/);
+  assert.match(source, /requirements-bundle\.txt/);
+  assert.match(source, /powerpoint["',\s\r\n]+["']licenses/);
+  assert.match(source, /PowerPoint license tree/);
+  assert.match(source, /verifyHashedTree/);
+  assert.match(
+    source,
+    /manifest\.sources\?\.powerpointSidecar\?\.template\?\.sha256/,
+  );
 });
