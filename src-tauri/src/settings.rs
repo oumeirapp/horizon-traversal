@@ -11,6 +11,8 @@ use crate::pipeline::files::{create_temporary_file, remove_if_exists, replace_fi
 
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const SETTINGS_SCHEMA_VERSION: u32 = 1;
+const DEFAULT_OUTPUT_ROOT_NAME: &str = "horizon-traversal";
+const LEGACY_DEFAULT_OUTPUT_ROOT_NAME: &str = "Horizon Traversal";
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -24,19 +26,36 @@ pub enum Theme {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AppSettings {
     pub default_output_path: String,
+    pub powerpoint_output_path: String,
     pub theme: Theme,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SettingsDocument {
     schema_version: u32,
     settings: AppSettings,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredSettingsDocument {
+    schema_version: u32,
+    settings: StoredAppSettings,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredAppSettings {
+    default_output_path: String,
+    #[serde(default)]
+    powerpoint_output_path: Option<String>,
+    theme: Theme,
+}
+
 #[derive(Debug, Error)]
 pub enum SettingsError {
-    #[error("Cannot resolve the default output folder: {0}")]
+    #[error("Cannot resolve the output folders: {0}")]
     DefaultsUnavailable(String),
     #[error("Cannot resolve the settings file location: {0}")]
     PathUnavailable(String),
@@ -111,7 +130,7 @@ pub fn default_settings(app: &AppHandle) -> Result<AppSettings, SettingsError> {
         .path()
         .download_dir()
         .map_err(|error| SettingsError::DefaultsUnavailable(error.to_string()))?;
-    default_settings_for(&downloads, &app.package_info().name)
+    default_settings_for(&downloads)
 }
 
 pub fn settings_path(app: &AppHandle) -> Result<PathBuf, SettingsError> {
@@ -121,36 +140,46 @@ pub fn settings_path(app: &AppHandle) -> Result<PathBuf, SettingsError> {
         .map_err(|error| SettingsError::PathUnavailable(error.to_string()))
 }
 
-fn default_settings_for(
-    downloads: &Path,
-    product_name: &str,
-) -> Result<AppSettings, SettingsError> {
-    let default_output_path = downloads.join(product_name);
+fn default_settings_for(downloads: &Path) -> Result<AppSettings, SettingsError> {
+    let product_directory = downloads.join(DEFAULT_OUTPUT_ROOT_NAME);
+    let default_output_path = product_directory.join("output");
     let default_output_path = default_output_path.to_str().ok_or_else(|| {
+        SettingsError::DefaultsUnavailable("the Downloads path is not valid UTF-8".to_owned())
+    })?;
+    let powerpoint_output_path = product_directory.join("pptx");
+    let powerpoint_output_path = powerpoint_output_path.to_str().ok_or_else(|| {
         SettingsError::DefaultsUnavailable("the Downloads path is not valid UTF-8".to_owned())
     })?;
 
     Ok(AppSettings {
         default_output_path: default_output_path.to_owned(),
+        powerpoint_output_path: powerpoint_output_path.to_owned(),
         theme: Theme::default(),
     })
 }
 
 fn validate_settings(mut settings: AppSettings) -> Result<AppSettings, SettingsError> {
-    let default_output_path = settings.default_output_path.trim();
-    if default_output_path.is_empty() {
-        return Err(SettingsError::Invalid(
-            "defaultOutputPath must not be empty".to_owned(),
-        ));
+    settings.default_output_path =
+        validate_output_path("defaultOutputPath", &settings.default_output_path)?;
+    settings.powerpoint_output_path =
+        validate_output_path("powerpointOutputPath", &settings.powerpoint_output_path)?;
+    Ok(settings)
+}
+
+fn validate_output_path(field_name: &str, output_path: &str) -> Result<String, SettingsError> {
+    let output_path = output_path.trim();
+    if output_path.is_empty() {
+        return Err(SettingsError::Invalid(format!(
+            "{field_name} must not be empty"
+        )));
     }
-    if !Path::new(default_output_path).is_absolute() {
-        return Err(SettingsError::Invalid(
-            "defaultOutputPath must be an absolute path".to_owned(),
-        ));
+    if !Path::new(output_path).is_absolute() {
+        return Err(SettingsError::Invalid(format!(
+            "{field_name} must be an absolute path"
+        )));
     }
 
-    settings.default_output_path = default_output_path.to_owned();
-    Ok(settings)
+    Ok(output_path.to_owned())
 }
 
 fn load_from_path(
@@ -167,12 +196,42 @@ fn load_from_path(
             });
         }
     };
-    let document: SettingsDocument = serde_json::from_slice(&bytes)
+    let document: StoredSettingsDocument = serde_json::from_slice(&bytes)
         .map_err(|error| SettingsError::Invalid(error.to_string()))?;
     if document.schema_version != SETTINGS_SCHEMA_VERSION {
         return Err(SettingsError::UnsupportedVersion(document.schema_version));
     }
-    validate_settings(document.settings)
+    let legacy_document = document.settings.powerpoint_output_path.is_none();
+    let default_output_path = if legacy_document {
+        migrate_legacy_default_output_path(document.settings.default_output_path, &defaults)
+    } else {
+        document.settings.default_output_path
+    };
+    validate_settings(AppSettings {
+        default_output_path,
+        powerpoint_output_path: document
+            .settings
+            .powerpoint_output_path
+            .unwrap_or(defaults.powerpoint_output_path),
+        theme: document.settings.theme,
+    })
+}
+
+fn migrate_legacy_default_output_path(
+    stored_output_path: String,
+    defaults: &AppSettings,
+) -> String {
+    let Some(downloads) = Path::new(&defaults.default_output_path)
+        .parent()
+        .and_then(Path::parent)
+    else {
+        return stored_output_path;
+    };
+    if Path::new(&stored_output_path) == downloads.join(LEGACY_DEFAULT_OUTPUT_ROOT_NAME) {
+        defaults.default_output_path.clone()
+    } else {
+        stored_output_path
+    }
 }
 
 fn save_to_path(settings_path: &Path, settings: &AppSettings) -> Result<(), SettingsError> {
@@ -231,20 +290,28 @@ mod tests {
     fn settings(default_output_path: &Path, theme: Theme) -> AppSettings {
         AppSettings {
             default_output_path: default_output_path.to_string_lossy().into_owned(),
+            powerpoint_output_path: default_output_path
+                .join("pptx")
+                .to_string_lossy()
+                .into_owned(),
             theme,
         }
     }
 
     #[test]
-    fn defaults_use_the_product_name_inside_downloads_and_preserve_the_dark_theme() {
+    fn defaults_use_distinct_horizon_traversal_folders_and_preserve_the_dark_theme() {
         let temporary = tempdir().unwrap();
         let downloads = temporary.path().join("Downloads");
 
-        let defaults = default_settings_for(&downloads, "Horizon Traversal").unwrap();
+        let defaults = default_settings_for(&downloads).unwrap();
 
         assert_eq!(
             PathBuf::from(defaults.default_output_path),
-            downloads.join("Horizon Traversal")
+            downloads.join("horizon-traversal/output")
+        );
+        assert_eq!(
+            PathBuf::from(defaults.powerpoint_output_path),
+            downloads.join("horizon-traversal/pptx")
         );
         assert_eq!(defaults.theme, Theme::Dark);
     }
@@ -282,6 +349,7 @@ mod tests {
                 "schemaVersion": 1,
                 "settings": {
                     "defaultOutputPath": saved.default_output_path,
+                    "powerpointOutputPath": saved.powerpoint_output_path,
                     "theme": "light"
                 }
             })
@@ -331,15 +399,14 @@ mod tests {
         let settings_path = temporary.path().join("settings.json");
 
         for invalid in ["", "  ", "relative/output"] {
-            let error = state
-                .save(
-                    &settings_path,
-                    AppSettings {
-                        default_output_path: invalid.to_owned(),
-                        theme: Theme::Dark,
-                    },
-                )
-                .unwrap_err();
+            let mut invalid_default = settings(&temporary.path().join("valid"), Theme::Dark);
+            invalid_default.default_output_path = invalid.to_owned();
+            let error = state.save(&settings_path, invalid_default).unwrap_err();
+            assert_eq!(error.code(), "settingsInvalid");
+
+            let mut invalid_powerpoint = settings(&temporary.path().join("valid"), Theme::Dark);
+            invalid_powerpoint.powerpoint_output_path = invalid.to_owned();
+            let error = state.save(&settings_path, invalid_powerpoint).unwrap_err();
             assert_eq!(error.code(), "settingsInvalid");
         }
 
@@ -349,6 +416,64 @@ mod tests {
             .unwrap();
         assert_eq!(PathBuf::from(saved.default_output_path), missing);
         assert!(!missing.exists());
+    }
+
+    #[test]
+    fn an_existing_document_without_a_powerpoint_path_uses_the_native_default() {
+        let temporary = tempdir().unwrap();
+        let settings_path = temporary.path().join("settings.json");
+        let downloads = temporary.path().join("Downloads");
+        let defaults = default_settings_for(&downloads).unwrap();
+        let legacy_output = temporary.path().join("legacy-output");
+        let document = json!({
+            "schemaVersion": 1,
+            "settings": {
+                "defaultOutputPath": legacy_output,
+                "theme": "light"
+            }
+        })
+        .to_string();
+        fs::write(&settings_path, &document).unwrap();
+
+        let loaded = SettingsState::default()
+            .load(&settings_path, defaults.clone())
+            .unwrap();
+
+        assert_eq!(PathBuf::from(loaded.default_output_path), legacy_output);
+        assert_eq!(
+            loaded.powerpoint_output_path,
+            defaults.powerpoint_output_path
+        );
+        assert_eq!(loaded.theme, Theme::Light);
+        assert_eq!(fs::read_to_string(settings_path).unwrap(), document);
+    }
+
+    #[test]
+    fn a_legacy_native_default_moves_to_the_new_asset_output_subfolder() {
+        let temporary = tempdir().unwrap();
+        let settings_path = temporary.path().join("settings.json");
+        let downloads = temporary.path().join("Downloads");
+        let defaults = default_settings_for(&downloads).unwrap();
+        let document = json!({
+            "schemaVersion": 1,
+            "settings": {
+                "defaultOutputPath": downloads.join(LEGACY_DEFAULT_OUTPUT_ROOT_NAME),
+                "theme": "dark"
+            }
+        })
+        .to_string();
+        fs::write(&settings_path, &document).unwrap();
+
+        let loaded = SettingsState::default()
+            .load(&settings_path, defaults.clone())
+            .unwrap();
+
+        assert_eq!(loaded.default_output_path, defaults.default_output_path);
+        assert_eq!(
+            loaded.powerpoint_output_path,
+            defaults.powerpoint_output_path
+        );
+        assert_eq!(fs::read_to_string(settings_path).unwrap(), document);
     }
 
     #[test]

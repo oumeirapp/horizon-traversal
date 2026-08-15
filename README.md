@@ -24,6 +24,28 @@ PDF conversion, image resizing, and video resizing can be enabled independently
 for each run. All three optimizations are enabled by default; disabled stages
 are omitted from the visible route and leave the copied assets unchanged.
 
+## PowerPoint workflow scaffold
+
+The interface uses Radix tabs to separate `Asset processing` from
+`PowerPoint only`. In `Asset processing`, the PowerPoint (`.pptx`) option is
+off by default and is frontend-only and unavailable. `PowerPoint only`
+validates a selected root using the planned model of one ticket per slide in a
+future combined deck.
+
+This is UI scaffolding only. `Create PowerPoint` remains disabled, and the
+preview and activity areas are placeholders. No PowerPoint file is generated,
+and there is no PowerPoint generation or new PowerPoint-specific Rust/IPC
+implementation yet.
+
+Settings keep separate native-directory destinations for asset runs and future
+PowerPoint decks. Both `Asset output folder` and `PowerPoint output folder` are
+editable and persisted, but the PowerPoint destination is not written to while
+presentation generation remains unavailable. Their defaults are
+`Downloads/horizon-traversal/output` and
+`Downloads/horizon-traversal/pptx`. Asset input is checked only against the
+asset destination, while PowerPoint input is checked only against the
+PowerPoint destination; each pair must not be equal or overlap.
+
 ## Asset selection and reports
 
 Within `Master Files`, an immediate child `Video` category is excluded, as is

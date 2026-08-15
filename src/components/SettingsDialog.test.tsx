@@ -14,6 +14,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 const settings: AppSettings = {
   defaultOutputPath: "/exports",
+  powerpointOutputPath: "/presentations",
   theme: "dark",
 };
 
@@ -59,7 +60,9 @@ describe("SettingsDialog", () => {
   it("uses the native directory chooser and submits a trimmed complete draft", async () => {
     const onThemePreview = vi.fn<(theme: AppTheme) => void>();
     const onSave = vi.fn();
-    dialogMocks.openDirectory.mockResolvedValue("/chosen/exports");
+    dialogMocks.openDirectory
+      .mockResolvedValueOnce("/chosen/assets")
+      .mockResolvedValueOnce("/chosen/presentations");
     render(
       <SettingsDialog
         open
@@ -72,31 +75,87 @@ describe("SettingsDialog", () => {
 
     await act(async () => {
       fireEvent.click(
-        screen.getByRole("button", { name: "Choose output folder" }),
+        screen.getByRole("button", { name: "Choose asset output folder" }),
       );
       await Promise.resolve();
     });
 
-    expect(dialogMocks.openDirectory).toHaveBeenCalledWith({
+    expect(dialogMocks.openDirectory).toHaveBeenNthCalledWith(1, {
       directory: true,
       multiple: false,
-      title: "Choose default output folder",
+      title: "Choose asset output folder",
       defaultPath: "/exports",
     });
-    const output = screen.getByRole("textbox", {
-      name: "Default output folder",
+    const assetOutput = screen.getByRole("textbox", {
+      name: "Asset output folder",
     });
-    expect(output).toHaveValue("/chosen/exports");
-    fireEvent.change(output, { target: { value: "  /final/exports  " } });
+    expect(assetOutput).toHaveValue("/chosen/assets");
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Choose PowerPoint output folder",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(dialogMocks.openDirectory).toHaveBeenNthCalledWith(2, {
+      directory: true,
+      multiple: false,
+      title: "Choose PowerPoint output folder",
+      defaultPath: "/presentations",
+    });
+    const powerpointOutput = screen.getByRole("textbox", {
+      name: "PowerPoint output folder",
+    });
+    expect(powerpointOutput).toHaveValue("/chosen/presentations");
+
+    fireEvent.change(assetOutput, {
+      target: { value: "  /final/assets  " },
+    });
+    fireEvent.change(powerpointOutput, {
+      target: { value: "  /final/presentations  " },
+    });
     fireEvent.click(screen.getByRole("radio", { name: /Light/ }));
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     expect(onSave).toHaveBeenCalledWith({
-      defaultOutputPath: "/final/exports",
+      defaultOutputPath: "/final/assets",
+      powerpointOutputPath: "/final/presentations",
       theme: "light",
     });
     expect(onThemePreview).toHaveBeenCalledWith("light");
     expect(onThemePreview).not.toHaveBeenCalledWith("dark");
+  });
+
+  it("requires both output folders before saving", () => {
+    render(
+      <SettingsDialog
+        open
+        settings={settings}
+        onThemePreview={() => undefined}
+        onSave={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+
+    const assetOutput = screen.getByRole("textbox", {
+      name: "Asset output folder",
+    });
+    const powerpointOutput = screen.getByRole("textbox", {
+      name: "PowerPoint output folder",
+    });
+    const save = screen.getByRole("button", { name: "Save changes" });
+    expect(assetOutput).toHaveAttribute("aria-required", "true");
+    expect(powerpointOutput).toHaveAttribute("aria-required", "true");
+
+    fireEvent.change(powerpointOutput, { target: { value: "   " } });
+    expect(save).toBeDisabled();
+    fireEvent.change(powerpointOutput, {
+      target: { value: "/presentations/new" },
+    });
+    expect(save).toBeEnabled();
   });
 
   it("keeps the dialog open and reports a rejected save", async () => {
@@ -145,7 +204,7 @@ describe("SettingsDialog", () => {
     fireEvent.click(trigger);
 
     expect(
-      screen.getByRole("textbox", { name: "Default output folder" }),
+      screen.getByRole("textbox", { name: "Asset output folder" }),
     ).toHaveFocus();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(trigger).toHaveFocus();

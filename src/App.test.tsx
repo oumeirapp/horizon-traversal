@@ -64,6 +64,7 @@ const warningOnlySummary: PipelineSummary = {
 
 const defaultSettings: AppSettings = {
   defaultOutputPath: "/exports",
+  powerpointOutputPath: "/powerpoint-exports",
   theme: "dark",
 };
 
@@ -106,6 +107,12 @@ describe("Horizon Traversal workbench", () => {
     expect(
       screen.getByRole("heading", { name: "Horizon Traversal" }),
     ).toBeVisible();
+    expect(
+      screen.getByRole("tab", { name: /Asset processing/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(
+      screen.getByRole("tab", { name: /PowerPoint only/ }),
+    ).toHaveAttribute("aria-selected", "false");
     expect(screen.getByRole("button", { name: "Start processing" })).toBeDisabled();
     expect(screen.getByText("Choose an input folder")).toBeVisible();
     expect(screen.queryByLabelText("Output folder")).not.toBeInTheDocument();
@@ -118,10 +125,191 @@ describe("Horizon Traversal workbench", () => {
     expect(screen.getByRole("checkbox", { name: "Optimize PDFs" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Optimize images" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Optimize video" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Create PPTX" })).not.toBeChecked();
+    expect(
+      screen.getByRole("group", { name: "Processing steps" }),
+    ).toBeVisible();
+    expect(screen.getByText("Processed")).toBeVisible();
     expect(screen.getByRole("tab", { name: /Activity/ })).toHaveAttribute(
       "aria-selected",
       "true",
     );
+  });
+
+  it("uses Radix workflow tabs and keeps independent input folders", async () => {
+    render(<App />);
+    await settleSettings();
+
+    const assetTab = screen.getByRole("tab", { name: /Asset processing/ });
+    const powerpointTab = screen.getByRole("tab", { name: /PowerPoint only/ });
+    fireEvent.change(screen.getByLabelText("Input folder"), {
+      target: { value: "/asset-tickets" },
+    });
+
+    const workflowTabs = screen.getByRole("tablist", { name: "Workflow mode" });
+    workflowTabs.focus();
+    fireEvent.focus(workflowTabs);
+    expect(assetTab).toHaveFocus();
+    await act(async () => {
+      fireEvent.keyDown(assetTab, { key: "ArrowRight" });
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(powerpointTab).toHaveFocus();
+    expect(powerpointTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("PowerPoint preview")).toBeVisible();
+    expect(
+      screen.queryByLabelText("Ticket filter Optional"),
+    ).not.toBeInTheDocument();
+
+    nativeMocks.openDialog.mockResolvedValueOnce("/powerpoint-tickets");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+      await Promise.resolve();
+    });
+    expect(nativeMocks.openDialog).toHaveBeenLastCalledWith({
+      directory: true,
+      multiple: false,
+      title: "Choose PowerPoint ticket source",
+      defaultPath: undefined,
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(360);
+    });
+
+    expect(nativeMocks.validateSelection).toHaveBeenLastCalledWith({
+      inputPath: "/powerpoint-tickets",
+      outputPath: "/powerpoint-exports",
+      ticketFilter: "",
+      processingOptions: {
+        pdf: false,
+        images: false,
+        video: false,
+      },
+    });
+    expect(screen.queryByText("Slide plan")).not.toBeInTheDocument();
+    expect(screen.queryByText(/planned slides?/)).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "P1 Launch" })).toBeVisible();
+    expect(screen.getByText("Slide 1 of 2 · Preview")).toBeVisible();
+    expect(
+      screen.getByRole("list", { name: "PowerPoint creation stages" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "PowerPoint activity" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/Ticket and slide activity will appear here/),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Create PowerPoint" })).toBeDisabled();
+    expect(nativeMocks.startPipeline).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.keyDown(powerpointTab, { key: "ArrowLeft" });
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(assetTab).toHaveFocus();
+    expect(assetTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText("Input folder")).toHaveValue("/asset-tickets");
+  });
+
+  it("keeps an invalid PowerPoint source in the non-generating preview", async () => {
+    nativeMocks.validateSelection.mockResolvedValue({
+      ...validSelection,
+      valid: false,
+      tickets: [],
+      issues: [
+        {
+          field: "selection",
+          code: "noTickets",
+          message: "No immediate ticket folders were found.",
+        },
+      ],
+    } satisfies SelectionSummary);
+    render(<App />);
+    await settleSettings();
+
+    const workflowTabs = screen.getByRole("tablist", { name: "Workflow mode" });
+    const assetTab = screen.getByRole("tab", { name: /Asset processing/ });
+    workflowTabs.focus();
+    fireEvent.focus(workflowTabs);
+    await act(async () => {
+      fireEvent.keyDown(assetTab, { key: "ArrowRight" });
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    fireEvent.change(screen.getByLabelText("Root folder"), {
+      target: { value: "/empty-root" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(360);
+    });
+
+    expect(screen.getByLabelText("Root folder")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(screen.getByText("No immediate ticket folders were found.")).toBeVisible();
+    expect(screen.queryByText("Slide plan")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Ticket preview" })).toBeVisible();
+    expect(screen.queryByText(/Slide 1 of/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create PowerPoint" })).toBeDisabled();
+    expect(nativeMocks.startPipeline).not.toHaveBeenCalled();
+  });
+
+  it("previews frontend-only PPTX without changing the native request", async () => {
+    const successSummary: PipelineSummary = {
+      ...partialSummary,
+      status: "success",
+      successfulTickets: 1,
+      partialTickets: 0,
+      failedFiles: 0,
+      warnings: 0,
+      errors: 0,
+    };
+    nativeMocks.startPipeline.mockResolvedValue(successSummary);
+    render(<App />);
+    await settleSettings();
+
+    const pptxOption = screen.getByRole("checkbox", { name: "Create PPTX" });
+    fireEvent.click(pptxOption);
+
+    expect(pptxOption).toBeChecked();
+    expect(
+      screen.getByText(/PPTX is not available yet/),
+    ).toBeVisible();
+    const route = screen.getByRole("list", { name: "Processing stages" });
+    expect(within(route).getAllByRole("listitem")).toHaveLength(7);
+    const powerpointStage = within(route).getByText("PowerPoint").closest("li");
+    expect(powerpointStage).toHaveClass("asset-route__stop--warning");
+
+    await configureValidRun();
+    const expectedRequest = {
+      inputPath: "/tickets",
+      outputPath: "/exports",
+      ticketFilter: "",
+      processingOptions: {
+        pdf: true,
+        images: true,
+        video: true,
+      },
+    };
+    expect(nativeMocks.validateSelection).toHaveBeenLastCalledWith(expectedRequest);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Start processing" }));
+      await Promise.resolve();
+    });
+
+    expect(nativeMocks.startPipeline).toHaveBeenCalledWith(
+      expectedRequest,
+      expect.any(Function),
+    );
+    expect(powerpointStage).toHaveClass("asset-route__stop--warning");
+    expect(powerpointStage).not.toHaveClass("asset-route__stop--complete");
+    const assetTab = screen.getByRole("tab", { name: /Asset processing/ });
+    const powerpointTab = screen.getByRole("tab", { name: /PowerPoint only/ });
+    expect(assetTab).toBeEnabled();
+    expect(powerpointTab).toBeDisabled();
+    fireEvent.keyDown(assetTab, { key: "ArrowRight" });
+    expect(assetTab).toHaveAttribute("aria-selected", "true");
   });
 
   it("previews appearance changes and restores the saved theme on cancel", async () => {
@@ -131,7 +319,7 @@ describe("Horizon Traversal workbench", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
     expect(screen.getByRole("dialog", { name: "Settings" })).toBeVisible();
     expect(
-      screen.getByRole("textbox", { name: "Default output folder" }),
+      screen.getByRole("textbox", { name: "Asset output folder" }),
     ).toHaveValue("/exports");
 
     fireEvent.click(screen.getByRole("radio", { name: /^Light/ }));
@@ -154,7 +342,7 @@ describe("Horizon Traversal workbench", () => {
     expect(document.documentElement).toHaveAttribute("data-theme", "light");
   });
 
-  it("saves the selected theme and default output folder", async () => {
+  it("saves the selected theme and asset output folder", async () => {
     nativeMocks.openDialog.mockResolvedValueOnce("/new-exports");
     render(<App />);
     await settleSettings();
@@ -162,7 +350,9 @@ describe("Horizon Traversal workbench", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
     fireEvent.click(screen.getByRole("radio", { name: /^Light/ }));
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Choose output folder" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Choose asset output folder" }),
+      );
       await Promise.resolve();
     });
     await act(async () => {
@@ -172,6 +362,7 @@ describe("Horizon Traversal workbench", () => {
 
     expect(nativeMocks.saveSettings).toHaveBeenCalledWith({
       defaultOutputPath: "/new-exports",
+      powerpointOutputPath: "/powerpoint-exports",
       theme: "light",
     });
     expect(document.documentElement).toHaveAttribute("data-theme", "light");
@@ -611,6 +802,8 @@ describe("Horizon Traversal workbench", () => {
     });
     expect(screen.getByLabelText("Input folder")).toHaveValue("/tickets");
     expect(screen.getByLabelText("Input folder")).toHaveFocus();
+    expect(screen.getByRole("tab", { name: /Asset processing/ })).toBeEnabled();
+    expect(screen.getByRole("tab", { name: /PowerPoint only/ })).toBeEnabled();
   });
 
   it("flushes pending events before showing an invocation failure", async () => {

@@ -10,6 +10,7 @@ import {
   type FormEvent,
   type MutableRefObject,
 } from "react";
+import * as Tabs from "@radix-ui/react-tabs";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ActivityPanel } from "./components/ActivityPanel";
 import {
@@ -34,19 +35,37 @@ import {
 import {
   createInitialRunState,
   runReducer,
+  type RunLogEntry,
   type RunPhase,
   type StageIssueCounts,
   type TicketProgress,
 } from "./lib/run-state";
 import "./App.css";
 
-const STAGES: Array<{ id: PipelineStage; label: string; short: string }> = [
+type WorkflowMode = "assets" | "powerpoint";
+type AssetStageId = PipelineStage | "pptx";
+type AssetProcessOption = keyof ProcessingOptions | "pptx";
+
+interface AssetStage {
+  id: AssetStageId;
+  label: string;
+  short: string;
+  unavailable?: boolean;
+}
+
+const STAGES: AssetStage[] = [
   { id: "discover", label: "Discover sources", short: "Discover" },
   { id: "copy", label: "Copy assets", short: "Copy" },
   { id: "pdf", label: "Convert PDFs", short: "PDF" },
   { id: "images", label: "Resize images", short: "Images" },
   { id: "video", label: "Resize video", short: "Video" },
   { id: "report", label: "Write report", short: "Report" },
+  {
+    id: "pptx",
+    label: "Create PowerPoint",
+    short: "PowerPoint",
+    unavailable: true,
+  },
 ];
 
 const DEFAULT_PROCESSING_OPTIONS: ProcessingOptions = {
@@ -55,12 +74,18 @@ const DEFAULT_PROCESSING_OPTIONS: ProcessingOptions = {
   video: true,
 };
 
+const NO_PROCESSING_OPTIONS: ProcessingOptions = {
+  pdf: false,
+  images: false,
+  video: false,
+};
+
 function applyTheme(theme: AppTheme) {
   document.documentElement.dataset.theme = theme;
 }
 
 const PROCESSING_OPTION_CONTROLS: Array<{
-  id: keyof ProcessingOptions;
+  id: AssetProcessOption;
   label: string;
   detail: string;
   accessibleLabel: string;
@@ -83,6 +108,12 @@ const PROCESSING_OPTION_CONTROLS: Array<{
     detail: "Resize",
     accessibleLabel: "Optimize video",
   },
+  {
+    id: "pptx",
+    label: "PPTX",
+    detail: "Unavailable",
+    accessibleLabel: "Create PPTX",
+  },
 ];
 
 interface ValidationState {
@@ -100,16 +131,18 @@ const initialValidation: ValidationState = {
 };
 
 const STAGE_OPTION: Partial<
-  Record<PipelineStage, keyof ProcessingOptions>
+  Record<AssetStageId, AssetProcessOption>
 > = {
   pdf: "pdf",
   images: "images",
   video: "video",
+  pptx: "pptx",
 };
 
-function selectedStages(options: ProcessingOptions) {
+function selectedStages(options: ProcessingOptions, pptx: boolean) {
   return STAGES.filter((stage) => {
     const option = STAGE_OPTION[stage.id];
+    if (option === "pptx") return pptx;
     return option === undefined || options[option];
   });
 }
@@ -143,6 +176,7 @@ function formatDuration(milliseconds: number) {
 function useSelectionValidation(
   request: SelectionRequest,
   paused: boolean,
+  resetWhenPaused = false,
 ): ValidationState {
   const [state, setState] = useState<ValidationState>(initialValidation);
   const versionRef = useRef(0);
@@ -153,7 +187,10 @@ function useSelectionValidation(
   useEffect(() => {
     versionRef.current += 1;
     const version = versionRef.current;
-    if (paused) return;
+    if (paused) {
+      if (resetWhenPaused) setState(initialValidation);
+      return;
+    }
 
     if (inputPath.trim() === "" || outputPath.trim() === "") {
       setState({ ...initialValidation, key });
@@ -184,7 +221,17 @@ function useSelectionValidation(
     }, 350);
 
     return () => window.clearTimeout(timer);
-  }, [images, inputPath, key, outputPath, paused, pdf, ticketFilter, video]);
+  }, [
+    images,
+    inputPath,
+    key,
+    outputPath,
+    paused,
+    pdf,
+    resetWhenPaused,
+    ticketFilter,
+    video,
+  ]);
 
   return state;
 }
@@ -320,7 +367,7 @@ function FieldIssue({ issue }: { issue: ValidationIssue | undefined }) {
   );
 }
 
-function stagePosition(stage: PipelineStage | null) {
+function stagePosition(stage: AssetStageId | null) {
   return stage === null ? -1 : STAGES.findIndex((item) => item.id === stage);
 }
 
@@ -332,7 +379,7 @@ function AssetRoute({
   failedFiles,
   stageIssues,
 }: {
-  stages: typeof STAGES;
+  stages: AssetStage[];
   phase: RunPhase;
   stage: PipelineStage | null;
   ticketStatus: TicketProgress["status"];
@@ -341,7 +388,7 @@ function AssetRoute({
 }) {
   const activeIndex = stagePosition(stage);
   const recordedErrorCount = stages.reduce((total, item) => {
-    const issues = stageIssues?.[item.id];
+    const issues = item.id === "pptx" ? undefined : stageIssues?.[item.id];
     return total + (issues?.errors ?? 0);
   }, 0);
   return (
@@ -352,7 +399,7 @@ function AssetRoute({
     >
       {stages.map((item, index) => {
         const stageIndex = stagePosition(item.id);
-        const issues = stageIssues?.[item.id];
+        const issues = item.id === "pptx" ? undefined : stageIssues?.[item.id];
         const warnings = issues?.warnings ?? 0;
         const errors = issues?.errors ?? 0;
         const issueCount = warnings + errors;
@@ -370,19 +417,23 @@ function AssetRoute({
           (phase === "success" && ticketStatus === null) ||
           stageIndex < activeIndex ||
           (ticketStatus !== null && stageIndex === activeIndex);
-        const state = failed
-          ? "failed"
-          : errors > 0 || fallbackPartialIssue
-            ? "issue"
-            : warnings > 0
-              ? "warning"
-              : reached
-                ? "complete"
-                : current
-                  ? "active"
-                  : "pending";
+        const state = item.unavailable
+          ? "warning"
+          : failed
+            ? "failed"
+            : errors > 0 || fallbackPartialIssue
+              ? "issue"
+              : warnings > 0
+                ? "warning"
+                : reached
+                  ? "complete"
+                  : current
+                    ? "active"
+                    : "pending";
         const issueDescription =
-          fallbackPartialIssue
+          item.unavailable
+            ? "unavailable; no presentation will be created"
+            : fallbackPartialIssue
             ? failedFiles > 0
               ? `${failedFiles} failed file${failedFiles === 1 ? "" : "s"}`
               : "errors reported"
@@ -415,7 +466,7 @@ function AssetRoute({
                   <path d="m3 8 3 3 7-7" />
                 </svg>
               ) : String(index + 1).padStart(2, "0")}
-              {issueCount === 0 ? null : (
+              {issueCount === 0 || item.unavailable ? null : (
                 <span className="asset-route__issue-count">{issueCount}</span>
               )}
             </span>
@@ -559,8 +610,172 @@ function RunResult({
   );
 }
 
+const POWERPOINT_CHECKPOINTS = [
+  "Collect assets",
+  "Compose layout",
+  "Place content",
+  "Finalize slide",
+] as const;
+
+const EMPTY_POWERPOINT_LOGS: RunLogEntry[] = [];
+
+function PowerPointWorkspace({
+  inputPath,
+  validation,
+  settingsLoadingError,
+  dialogError,
+  onInputChange,
+  onChooseFolder,
+}: {
+  inputPath: string;
+  validation: ValidationState;
+  settingsLoadingError: string | null;
+  dialogError: string | null;
+  onInputChange: (value: string) => void;
+  onChooseFolder: () => void;
+}) {
+  const summary = validation.summary;
+  const issues = summary?.issues ?? [];
+  const inputIssue = issues.find((issue) => issue.field === "input");
+  const outputIssue = issues.find((issue) => issue.field === "output");
+  const selectionIssue = issues.find(
+    (issue) => issue.field === "selection" || issue.field === "filter",
+  );
+  const generalIssue = issues.find((issue) => issue.field === "general");
+  const ticketCount = summary?.valid ? summary.tickets.length : 0;
+  const firstTicket = summary?.valid ? summary.tickets[0]?.name : undefined;
+
+  return (
+    <div className="workspace workspace--powerpoint">
+      <section className="setup-card" aria-labelledby="powerpoint-setup-heading">
+        <div className="section-heading">
+          <div>
+            <p className="section-kicker">01 · Configure</p>
+            <h2 id="powerpoint-setup-heading">Choose the presentation source</h2>
+          </div>
+          <p>Each immediate ticket folder will become one slide.</p>
+        </div>
+
+        <div className="powerpoint-config">
+          <div className="field field--full">
+            <label htmlFor="powerpoint-input-path">Root folder</label>
+            <div
+              className={`path-control${
+                inputIssue || selectionIssue ? " path-control--invalid" : ""
+              }`}
+            >
+              <FolderIcon />
+              <input
+                id="powerpoint-input-path"
+                value={inputPath}
+                onChange={(event) => onInputChange(event.target.value)}
+                placeholder="Path to ticket folders"
+                aria-invalid={inputIssue !== undefined || selectionIssue !== undefined}
+                aria-describedby="powerpoint-input-help"
+              />
+              <button type="button" onClick={onChooseFolder}>
+                Choose folder
+              </button>
+            </div>
+            <div id="powerpoint-input-help">
+              {inputPath === "" ? (
+                <p className="field-message">Required · contains ticket folders</p>
+              ) : null}
+              <FieldIssue issue={inputIssue} />
+              <FieldIssue issue={selectionIssue} />
+            </div>
+          </div>
+
+          {dialogError === null ? null : (
+            <p className="form-alert" role="alert">
+              {dialogError}
+            </p>
+          )}
+          {settingsLoadingError === null ? null : (
+            <p className="form-alert" role="alert">
+              Settings could not be loaded: {settingsLoadingError}
+            </p>
+          )}
+          {validation.error === null ? null : (
+            <p className="form-alert" role="alert">
+              {validation.error}
+            </p>
+          )}
+          {outputIssue === undefined ? null : (
+            <p className="form-alert" role="alert">
+              {outputIssue.message} Update the PowerPoint output folder in Settings.
+            </p>
+          )}
+          <FieldIssue issue={generalIssue} />
+          {summary?.warnings.map((warning) => (
+            <p className="form-warning" key={warning}>
+              {warning}
+            </p>
+          ))}
+
+          <div className="start-row powerpoint-start-row">
+            <button type="button" className="button button--primary" disabled>
+              <span>Create PowerPoint</span>
+              <ArrowIcon />
+            </button>
+            <p>Coming soon · this preview does not create a presentation.</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="run-card powerpoint-process" aria-labelledby="powerpoint-process-heading">
+        <div className="run-card__heading">
+          <div>
+            <p className="section-kicker">02 · Process</p>
+            <h2 id="powerpoint-process-heading">{firstTicket ?? "Ticket preview"}</h2>
+            <p>
+              {ticketCount > 0
+                ? `Slide 1 of ${ticketCount} · Preview`
+                : "Choose a valid root folder to preview the first slide."}
+            </p>
+          </div>
+          <span className="preview-badge">Preview only</span>
+        </div>
+
+        <div className="slide-storyboard">
+          <div className="slide-storyboard__frame" aria-hidden="true">
+            <span>01</span>
+            <i />
+            <i />
+            <i />
+          </div>
+          <div className="slide-storyboard__body">
+            <p className="slide-storyboard__status">Waiting to collect approved assets</p>
+            <p className="slide-storyboard__copy">
+              Ticket content, layout, and export details will appear here when
+              PowerPoint creation is implemented.
+            </p>
+            <ol className="powerpoint-checkpoints" aria-label="PowerPoint creation stages">
+              {POWERPOINT_CHECKPOINTS.map((checkpoint) => (
+                <li key={checkpoint}>
+                  <span aria-hidden="true" />
+                  {checkpoint}
+                </li>
+              ))}
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <ActivityPanel
+        logs={EMPTY_POWERPOINT_LOGS}
+        kicker="Presentation record"
+        heading="PowerPoint activity"
+        emptyMessage="Ticket and slide activity will appear here when PowerPoint creation is available."
+      />
+    </div>
+  );
+}
+
 function App() {
+  const [workflow, setWorkflow] = useState<WorkflowMode>("assets");
   const [inputPath, setInputPath] = useState("");
+  const [powerpointInputPath, setPowerpointInputPath] = useState("");
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsLoadingError, setSettingsLoadingError] = useState<string | null>(null);
@@ -570,6 +785,7 @@ function App() {
   const [processingOptions, setProcessingOptions] = useState<ProcessingOptions>(
     DEFAULT_PROCESSING_OPTIONS,
   );
+  const [pptxEnabled, setPptxEnabled] = useState(false);
   const [run, dispatch] = useReducer(runReducer, undefined, createInitialRunState);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
@@ -580,16 +796,45 @@ function App() {
     dispatch,
     runGenerationRef,
   );
-  const outputPath = settings?.defaultOutputPath ?? "";
+  const assetOutputPath = settings?.defaultOutputPath ?? "";
+  const powerpointOutputPath = settings?.powerpointOutputPath ?? "";
   const request = useMemo(
-    () => ({ inputPath, outputPath, ticketFilter, processingOptions }),
-    [inputPath, outputPath, processingOptions, ticketFilter],
+    () => ({
+      inputPath,
+      outputPath: assetOutputPath,
+      ticketFilter,
+      processingOptions,
+    }),
+    [assetOutputPath, inputPath, processingOptions, ticketFilter],
+  );
+  const powerpointRequest = useMemo(
+    () => ({
+      inputPath: powerpointInputPath,
+      outputPath: powerpointOutputPath,
+      ticketFilter: "",
+      processingOptions: NO_PROCESSING_OPTIONS,
+    }),
+    [powerpointInputPath, powerpointOutputPath],
   );
   const running = run.phase === "running";
   const configurationLocked = run.phase !== "idle";
-  const validation = useSelectionValidation(request, configurationLocked);
+  const validation = useSelectionValidation(
+    request,
+    configurationLocked || workflow !== "assets",
+    workflow !== "assets",
+  );
+  const powerpointValidation = useSelectionValidation(
+    powerpointRequest,
+    workflow !== "powerpoint",
+    workflow !== "powerpoint",
+  );
   const key = requestKey(request);
   const currentValidation = validation.key === key ? validation : initialValidation;
+  const powerpointKey = requestKey(powerpointRequest);
+  const currentPowerpointValidation =
+    powerpointValidation.key === powerpointKey
+      ? powerpointValidation
+      : initialValidation;
   const summary = currentValidation.summary;
   const issues = summary?.issues ?? [];
   const inputIssue = issues.find((issue) => issue.field === "input");
@@ -599,6 +844,7 @@ function App() {
   );
   const generalIssue = issues.find((issue) => issue.field === "general");
   const canStart =
+    workflow === "assets" &&
     run.phase === "idle" &&
     currentValidation.status === "ready" &&
     summary?.valid === true;
@@ -630,7 +876,7 @@ function App() {
   const currentTicketProgress = run.tickets.find(
     (ticket) => ticket.name === run.currentTicket,
   );
-  const activeStages = selectedStages(processingOptions);
+  const activeStages = selectedStages(processingOptions, pptxEnabled);
 
   useEffect(() => {
     let active = true;
@@ -664,6 +910,31 @@ function App() {
       }
     } catch (error) {
       setDialogError(nativeErrorMessage(error));
+    }
+  }
+
+  async function choosePowerpointFolder() {
+    setDialogError(null);
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "Choose PowerPoint ticket source",
+        defaultPath: powerpointInputPath || undefined,
+      });
+      if (typeof selected === "string") {
+        setPowerpointInputPath(selected);
+      }
+    } catch (error) {
+      setDialogError(nativeErrorMessage(error));
+    }
+  }
+
+  function changeWorkflow(value: string) {
+    if (configurationLocked) return;
+    if (value === "assets" || value === "powerpoint") {
+      setDialogError(null);
+      setWorkflow(value);
     }
   }
 
@@ -744,14 +1015,20 @@ function App() {
   }
 
   function setProcessingOption(
-    option: keyof ProcessingOptions,
+    option: AssetProcessOption,
     enabled: boolean,
   ) {
+    if (option === "pptx") {
+      setPptxEnabled(enabled);
+      return;
+    }
     setProcessingOptions((current) => ({ ...current, [option]: enabled }));
   }
 
   const statusLabel =
-    run.phase === "running"
+    workflow === "powerpoint"
+      ? "PowerPoint preview"
+      : run.phase === "running"
       ? "Transfer in progress"
       : run.phase === "success"
         ? "Complete"
@@ -763,7 +1040,9 @@ function App() {
               ? "Ready to transfer"
               : "Set up transfer";
   const runAnnouncement =
-    run.phase === "running"
+    workflow === "powerpoint"
+      ? "PowerPoint preview. Choose a ticket root to inspect the future slide preview."
+      : run.phase === "running"
       ? `${run.currentTicket ?? "Preparing tickets"}. ${
           run.currentStage === null
             ? "Waiting for the next stage"
@@ -812,7 +1091,44 @@ function App() {
         </p>
       </header>
 
-      <div className="workspace">
+      <Tabs.Root
+        className="workflow-tabs"
+        value={workflow}
+        onValueChange={changeWorkflow}
+      >
+        <div className="workflow-switch-shell">
+          <Tabs.List className="workflow-switch" aria-label="Workflow mode">
+            <Tabs.Trigger
+              className="workflow-switch__tab"
+              value="assets"
+              disabled={configurationLocked && workflow !== "assets"}
+            >
+              <span className="workflow-switch__mark" aria-hidden="true">
+                Assets
+              </span>
+              <span className="workflow-switch__copy">
+                <strong>Asset processing</strong>
+                <small>Collect, prepare, and report</small>
+              </span>
+            </Tabs.Trigger>
+            <Tabs.Trigger
+              className="workflow-switch__tab"
+              value="powerpoint"
+              disabled={configurationLocked && workflow !== "powerpoint"}
+            >
+              <span className="workflow-switch__mark" aria-hidden="true">
+                PPTX
+              </span>
+              <span className="workflow-switch__copy">
+                <strong>PowerPoint only</strong>
+                <small>One ticket per future slide</small>
+              </span>
+            </Tabs.Trigger>
+          </Tabs.List>
+        </div>
+
+        <Tabs.Content className="workflow-content" value="assets">
+          <div className="workspace">
         <section className="setup-card" aria-labelledby="setup-heading">
           <div className="section-heading">
             <div>
@@ -877,8 +1193,8 @@ function App() {
                           ? "Settings unavailable"
                           : settings === null
                             ? "Loading settings…"
-                            : outputPath === ""
-                              ? "Set a default output folder in Settings"
+                            : assetOutputPath === ""
+                              ? "Set an asset output folder in Settings"
                               : summary === null
                                 ? "Choose an input folder"
                           : `${summary.tickets.length} ticket${summary.tickets.length === 1 ? "" : "s"} matched`}
@@ -888,37 +1204,56 @@ function App() {
             </div>
 
             <fieldset className="processing-options" disabled={configurationLocked}>
-              <legend className="sr-only">Asset optimization</legend>
+              <legend className="sr-only">Processing steps</legend>
               <div className="processing-options__intro">
-                <strong>Asset optimization</strong>
-                <p id="processing-options-help">Choose formats to optimize after copying.</p>
+                <strong>Processing steps</strong>
+                <p id="processing-options-help">
+                  Choose which processes to include in this run.
+                </p>
               </div>
               <div className="processing-options__controls">
-                {PROCESSING_OPTION_CONTROLS.map((option) => (
-                  <label className="processing-option" key={option.id}>
-                    <span className="processing-option__copy">
-                      <strong>{option.label}</strong>
-                      <small>
-                        {processingOptions[option.id] ? option.detail : "Copy only"}
-                      </small>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={processingOptions[option.id]}
-                      onChange={(event) =>
-                        setProcessingOption(option.id, event.target.checked)
-                      }
-                      disabled={configurationLocked}
-                      aria-label={option.accessibleLabel}
-                      aria-describedby="processing-options-help"
-                    />
-                    <span className="processing-option__switch" aria-hidden="true">
-                      <span />
-                    </span>
-                  </label>
-                ))}
+                {PROCESSING_OPTION_CONTROLS.map((option) => {
+                  const enabled =
+                    option.id === "pptx"
+                      ? pptxEnabled
+                      : processingOptions[option.id];
+                  return (
+                    <label className="processing-option" key={option.id}>
+                      <span className="processing-option__copy">
+                        <strong>{option.label}</strong>
+                        <small>
+                          {enabled
+                            ? option.detail
+                            : option.id === "pptx"
+                              ? "Off"
+                              : "Copy only"}
+                        </small>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={enabled}
+                        onChange={(event) =>
+                          setProcessingOption(option.id, event.target.checked)
+                        }
+                        disabled={configurationLocked}
+                        aria-label={option.accessibleLabel}
+                        aria-describedby="processing-options-help"
+                      />
+                      <span className="processing-option__switch" aria-hidden="true">
+                        <span />
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
             </fieldset>
+
+            {pptxEnabled ? (
+              <p className="form-warning powerpoint-unavailable" role="status">
+                PPTX is not available yet. Selected asset processes will run normally,
+                but no presentation will be created.
+              </p>
+            ) : null}
 
             {dialogError === null ? null : <p className="form-alert" role="alert">{dialogError}</p>}
             {settingsLoadingError === null ? null : (
@@ -931,7 +1266,7 @@ function App() {
             )}
             {outputIssue === undefined ? null : (
               <p className="form-alert" role="alert">
-                {outputIssue.message} Update the default output folder in Settings.
+                {outputIssue.message} Update the asset output folder in Settings.
               </p>
             )}
             <FieldIssue issue={generalIssue} />
@@ -1011,7 +1346,7 @@ function App() {
               <dd>{run.summary?.copiedFiles ?? liveTotals.copiedFiles}</dd>
             </div>
             <div>
-              <dt>Optimized</dt>
+              <dt>Processed</dt>
               <dd>{run.summary?.changedFiles ?? liveTotals.changedFiles}</dd>
             </div>
             <div>
@@ -1039,8 +1374,21 @@ function App() {
         />
         {openError === null ? null : <p className="form-alert output-alert" role="alert">{openError}</p>}
 
-        <ActivityPanel logs={run.logs} />
-      </div>
+            <ActivityPanel logs={run.logs} />
+          </div>
+        </Tabs.Content>
+
+        <Tabs.Content className="workflow-content" value="powerpoint">
+          <PowerPointWorkspace
+            inputPath={powerpointInputPath}
+            validation={currentPowerpointValidation}
+            settingsLoadingError={settingsLoadingError}
+            dialogError={dialogError}
+            onInputChange={setPowerpointInputPath}
+            onChooseFolder={() => void choosePowerpointFolder()}
+          />
+        </Tabs.Content>
+      </Tabs.Root>
       {settings === null ? null : (
         <SettingsDialog
           open={settingsOpen}

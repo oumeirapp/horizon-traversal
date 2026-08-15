@@ -22,6 +22,8 @@ export interface SettingsDialogProps {
 
 export const SETTINGS_DIALOG_ID = "settings-dialog";
 
+type OutputPathSetting = "defaultOutputPath" | "powerpointOutputPath";
+
 function nativeErrorMessage(error: unknown) {
   if (
     typeof error === "object" &&
@@ -61,23 +63,34 @@ function SettingsDialogContent({
   onCancel,
 }: Omit<SettingsDialogProps, "open">) {
   const [draft, setDraft] = useState<AppSettings>(() => ({ ...settings }));
-  const [pickerError, setPickerError] = useState<string | null>(null);
+  const [pickerError, setPickerError] = useState<{
+    field: OutputPathSetting;
+    message: string;
+  } | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const outputRef = useRef<HTMLInputElement>(null);
+  const assetOutputRef = useRef<HTMLInputElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const descriptionId = useId();
-  const outputId = useId();
-  const outputHelpId = useId();
+  const assetOutputId = useId();
+  const assetOutputHelpId = useId();
+  const assetOutputErrorId = useId();
+  const powerpointOutputId = useId();
+  const powerpointOutputHelpId = useId();
+  const powerpointOutputErrorId = useId();
   const appearanceHelpId = useId();
-  const pickerErrorId = useId();
   const busy = saving || submitting;
   const displayedSaveError = submissionError ?? saveError;
-  const outputDescription = pickerError
-    ? `${outputHelpId} ${pickerErrorId}`
-    : outputHelpId;
+  const assetOutputDescription =
+    pickerError?.field === "defaultOutputPath"
+      ? `${assetOutputHelpId} ${assetOutputErrorId}`
+      : assetOutputHelpId;
+  const powerpointOutputDescription =
+    pickerError?.field === "powerpointOutputPath"
+      ? `${powerpointOutputHelpId} ${powerpointOutputErrorId}`
+      : powerpointOutputHelpId;
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -96,7 +109,7 @@ function SettingsDialogContent({
         dialog.setAttribute("open", "");
       }
     }
-    if (!outputDisabled) outputRef.current?.focus();
+    if (!outputDisabled) assetOutputRef.current?.focus();
     else closeRef.current?.focus();
 
     return () => {
@@ -118,24 +131,27 @@ function SettingsDialogContent({
     onCancel();
   }
 
-  async function chooseOutputFolder() {
+  async function chooseOutputFolder(
+    field: OutputPathSetting,
+    title: string,
+  ) {
     setPickerError(null);
     setSubmissionError(null);
     try {
       const selected = await openDirectory({
         directory: true,
         multiple: false,
-        title: "Choose default output folder",
-        defaultPath: draft.defaultOutputPath.trim() || undefined,
+        title,
+        defaultPath: draft[field].trim() || undefined,
       });
       if (typeof selected === "string") {
         setDraft((current) => ({
           ...current,
-          defaultOutputPath: selected,
+          [field]: selected,
         }));
       }
     } catch (error) {
-      setPickerError(nativeErrorMessage(error));
+      setPickerError({ field, message: nativeErrorMessage(error) });
     }
   }
 
@@ -148,10 +164,15 @@ function SettingsDialogContent({
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const defaultOutputPath = draft.defaultOutputPath.trim();
-    if (busy || defaultOutputPath === "") return;
+    const powerpointOutputPath = draft.powerpointOutputPath.trim();
+    if (busy || defaultOutputPath === "" || powerpointOutputPath === "") {
+      return;
+    }
     setSubmissionError(null);
     setSubmitting(true);
-    void Promise.resolve(onSave({ ...draft, defaultOutputPath }))
+    void Promise.resolve(
+      onSave({ ...draft, defaultOutputPath, powerpointOutputPath }),
+    )
       .catch((error: unknown) => {
         setSubmissionError(nativeErrorMessage(error));
       })
@@ -178,7 +199,8 @@ function SettingsDialogContent({
           <p className="section-kicker">Application</p>
           <h2 id={titleId}>Settings</h2>
           <p id={descriptionId}>
-            Choose where new transfers go and how the workbench looks.
+            Choose where asset runs and future presentations go, and how the
+            workbench looks.
           </p>
         </div>
         <button
@@ -197,50 +219,115 @@ function SettingsDialogContent({
         <div className="settings-dialog__body">
           <div className="settings-group settings-group--destination">
             <div className="settings-group__heading">
-              <h3>Default output folder</h3>
-              <p>Used automatically for every new transfer.</p>
+              <h3>Output folders</h3>
+              <p>Each workflow validates its input against its own destination.</p>
             </div>
-            <label className="sr-only" htmlFor={outputId}>
-              Default output folder
-            </label>
-            <div className="path-control">
-              <FolderIcon />
-              <input
-                ref={outputRef}
-                id={outputId}
-                value={draft.defaultOutputPath}
-                onChange={(event) => {
-                  setPickerError(null);
-                  setSubmissionError(null);
-                  setDraft((current) => ({
-                    ...current,
-                    defaultOutputPath: event.target.value,
-                  }));
-                }}
-                placeholder="Path for collected assets"
-                disabled={busy || outputDisabled}
-                aria-required="true"
-                aria-describedby={outputDescription}
-              />
-              <button
-                type="button"
-                disabled={busy || outputDisabled}
-                aria-label="Choose output folder"
-                onClick={() => void chooseOutputFolder()}
-              >
-                Choose folder
-              </button>
+            <div className="settings-destinations">
+              <div className="settings-destination">
+                <div className="settings-destination__heading">
+                  <label htmlFor={assetOutputId}>Asset output folder</label>
+                  <span>Collected assets and reports</span>
+                </div>
+                <div className="path-control">
+                  <FolderIcon />
+                  <input
+                    ref={assetOutputRef}
+                    id={assetOutputId}
+                    value={draft.defaultOutputPath}
+                    onChange={(event) => {
+                      setPickerError(null);
+                      setSubmissionError(null);
+                      setDraft((current) => ({
+                        ...current,
+                        defaultOutputPath: event.target.value,
+                      }));
+                    }}
+                    placeholder="Path for collected assets"
+                    disabled={busy || outputDisabled}
+                    aria-required="true"
+                    aria-describedby={assetOutputDescription}
+                  />
+                  <button
+                    type="button"
+                    disabled={busy || outputDisabled}
+                    aria-label="Choose asset output folder"
+                    onClick={() =>
+                      void chooseOutputFolder(
+                        "defaultOutputPath",
+                        "Choose asset output folder",
+                      )
+                    }
+                  >
+                    Choose folder
+                  </button>
+                </div>
+                <p id={assetOutputHelpId} className="field-message">
+                  {outputDisabled
+                    ? "The destination can be changed after the current run."
+                    : "Must not overlap the asset input folder."}
+                </p>
+                {pickerError?.field === "defaultOutputPath" ? (
+                  <p id={assetOutputErrorId} className="form-alert" role="alert">
+                    {pickerError.message}
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="settings-destination">
+                <div className="settings-destination__heading">
+                  <label htmlFor={powerpointOutputId}>
+                    PowerPoint output folder
+                  </label>
+                  <span>Future combined presentation</span>
+                </div>
+                <div className="path-control">
+                  <FolderIcon />
+                  <input
+                    id={powerpointOutputId}
+                    value={draft.powerpointOutputPath}
+                    onChange={(event) => {
+                      setPickerError(null);
+                      setSubmissionError(null);
+                      setDraft((current) => ({
+                        ...current,
+                        powerpointOutputPath: event.target.value,
+                      }));
+                    }}
+                    placeholder="Path for future presentations"
+                    disabled={busy || outputDisabled}
+                    aria-required="true"
+                    aria-describedby={powerpointOutputDescription}
+                  />
+                  <button
+                    type="button"
+                    disabled={busy || outputDisabled}
+                    aria-label="Choose PowerPoint output folder"
+                    onClick={() =>
+                      void chooseOutputFolder(
+                        "powerpointOutputPath",
+                        "Choose PowerPoint output folder",
+                      )
+                    }
+                  >
+                    Choose folder
+                  </button>
+                </div>
+                <p id={powerpointOutputHelpId} className="field-message">
+                  {outputDisabled
+                    ? "The destination can be changed after the current run."
+                    : "Must not overlap the PowerPoint input folder."}
+                </p>
+                {pickerError?.field === "powerpointOutputPath" ? (
+                  <p
+                    id={powerpointOutputErrorId}
+                    className="form-alert"
+                    role="alert"
+                  >
+                    {pickerError.message}
+                  </p>
+                ) : null}
+              </div>
             </div>
-            <p id={outputHelpId} className="field-message">
-              {outputDisabled
-                ? "The destination can be changed after the current run."
-                : "Must not overlap the input folder."}
-            </p>
-            {pickerError === null ? null : (
-              <p id={pickerErrorId} className="form-alert" role="alert">
-                {pickerError}
-              </p>
-            )}
           </div>
 
           <fieldset
@@ -301,7 +388,11 @@ function SettingsDialogContent({
           <button
             type="submit"
             className="button button--primary"
-            disabled={busy || draft.defaultOutputPath.trim() === ""}
+            disabled={
+              busy ||
+              draft.defaultOutputPath.trim() === "" ||
+              draft.powerpointOutputPath.trim() === ""
+            }
           >
             {busy ? "Saving…" : "Save changes"}
           </button>

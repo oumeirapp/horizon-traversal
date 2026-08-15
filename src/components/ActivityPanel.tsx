@@ -12,6 +12,9 @@ type LogTab = "activity" | "warning" | "error";
 
 interface ActivityPanelProps {
   logs: RunLogEntry[];
+  heading?: string;
+  kicker?: string;
+  emptyMessage?: string;
 }
 
 const LOG_RENDER_LIMIT = 750;
@@ -44,7 +47,12 @@ function LogLevelMark({ level }: { level: RunLogEntry["level"] }) {
   );
 }
 
-function ActivityPanelComponent({ logs }: ActivityPanelProps) {
+function ActivityPanelComponent({
+  logs,
+  heading = "Activity",
+  kicker = "Run record",
+  emptyMessage = "Run details will appear here as each asset moves.",
+}: ActivityPanelProps) {
   const [tab, setTab] = useState<LogTab>("activity");
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase());
@@ -112,8 +120,8 @@ function ActivityPanelComponent({ logs }: ActivityPanelProps) {
     <section className="activity-panel" aria-labelledby="activity-heading">
       <div className="activity-panel__header">
         <div>
-          <p className="section-kicker">Run record</p>
-          <h2 id="activity-heading">Activity</h2>
+          <p className="section-kicker">{kicker}</p>
+          <h2 id="activity-heading">{heading}</h2>
         </div>
         <div className="activity-panel__tools">
           <label className="log-search">
@@ -174,7 +182,7 @@ function ActivityPanelComponent({ logs }: ActivityPanelProps) {
             </svg>
             <p>
               {logs.length === 0
-                ? "Run details will appear here as each asset moves."
+                ? emptyMessage
                 : "No entries match this view."}
             </p>
           </div>

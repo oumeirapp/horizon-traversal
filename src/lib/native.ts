@@ -4,6 +4,7 @@ export type AppTheme = "dark" | "light";
 
 export interface AppSettings {
   defaultOutputPath: string;
+  powerpointOutputPath: string;
   theme: AppTheme;
 }
 

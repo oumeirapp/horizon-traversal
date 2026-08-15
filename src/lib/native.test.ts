@@ -49,6 +49,7 @@ const request: SelectionRequest = {
 
 const appSettings: AppSettings = {
   defaultOutputPath: "/exports",
+  powerpointOutputPath: "/presentations",
   theme: "dark",
 };
 
@@ -151,6 +152,7 @@ describe("native Tauri boundary", () => {
     expectTypeOf(loadSettings).returns.toEqualTypeOf<Promise<AppSettings>>();
     expectTypeOf(saveSettings).returns.toEqualTypeOf<Promise<AppSettings>>();
     expectTypeOf<AppSettings["theme"]>().toEqualTypeOf<AppTheme>();
+    expectTypeOf<AppSettings["powerpointOutputPath"]>().toEqualTypeOf<string>();
     expectTypeOf<AppTheme>().toEqualTypeOf<"dark" | "light">();
     expectTypeOf<PipelineStage>().toEqualTypeOf<
       "discover" | "copy" | "pdf" | "images" | "video" | "report"

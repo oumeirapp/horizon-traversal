@@ -84,7 +84,25 @@ cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-f
 
 ## UI rules
 
-- Keep the navy/teal identity and six-stage route.
+- Keep the navy/teal identity and six native processing stages. The optional
+  frontend-only PPTX preview may add its unavailable seventh route stop.
+- Keep the workflow split in Radix tabs named `Asset processing` and
+  `PowerPoint only`.
+- Keep the PowerPoint (`.pptx`) option in `Asset processing` off by default,
+  frontend-only, and unavailable. It must not alter or enter the Rust pipeline.
+- In `PowerPoint only`, validate the selected root for the planned combined
+  deck model, with one ticket per future slide. Keep `Create PowerPoint`
+  disabled and keep the preview and activity surfaces as non-generating
+  scaffolding.
+- Do not generate PowerPoint files or add PowerPoint-specific Rust commands or
+  IPC until that backend work is explicitly approved.
+- Keep separate persisted output settings: `defaultOutputPath` for asset runs
+  and `powerpointOutputPath` for future decks. Expose both through editable
+  native directory-picker controls, while leaving the PowerPoint destination
+  unused until generation is implemented. Default them to
+  `Downloads/horizon-traversal/output` and
+  `Downloads/horizon-traversal/pptx`. Validate each workflow's input only
+  against its corresponding output, rejecting equality or ancestry overlap.
 - Preserve keyboard navigation, visible focus, accessible contrast, and
   reduced-motion behavior.
 - Keep event ingestion batched and log rendering bounded; avoid rerender churn

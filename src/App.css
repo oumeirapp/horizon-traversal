@@ -509,6 +509,44 @@ input:disabled {
   width: 100%;
 }
 
+.settings-destinations {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-destination + .settings-destination {
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.settings-destination__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 7px;
+}
+
+.settings-destination__heading > label {
+  color: var(--label);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.settings-destination__heading > span {
+  color: var(--quiet);
+  font-size: 0.68rem;
+  text-align: right;
+}
+
+.settings-destination > .field-message {
+  margin-top: 6px;
+}
+
+.settings-destination > .form-alert {
+  margin-top: 8px;
+}
+
 .settings-group--appearance {
   display: grid;
   grid-template-columns: minmax(150px, 0.62fr) minmax(360px, 1.38fr);
@@ -633,6 +671,110 @@ input:disabled {
   background: var(--panel-wash);
 }
 
+.workflow-tabs,
+.workflow-content {
+  display: block;
+  min-width: 0;
+}
+
+.workflow-switch-shell {
+  width: min(1500px, 100%);
+  margin: 0 auto;
+  padding: 24px clamp(24px, 5vw, 72px) 0;
+}
+
+.workflow-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  width: 100%;
+  padding: 5px;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: var(--panel-wash);
+  box-shadow: 0 14px 42px var(--card-shadow);
+}
+
+.workflow-switch__tab {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  min-height: 62px;
+  padding: 10px 15px;
+  color: var(--quiet);
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  text-align: left;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.workflow-switch__tab:not(:disabled):hover {
+  color: var(--text);
+  background: var(--surface-hover-subtle);
+}
+
+.workflow-switch__tab[data-state="active"] {
+  color: var(--text);
+  border-color: var(--line-soft);
+  background: var(--deck-raised);
+  box-shadow: 0 7px 22px var(--card-shadow);
+}
+
+.workflow-switch__mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  min-width: 58px;
+  height: 34px;
+  padding: 0 9px;
+  color: var(--quiet);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--control-bg-soft);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.workflow-switch__tab[data-state="active"] .workflow-switch__mark {
+  color: var(--on-accent);
+  border-color: var(--teal);
+  background: var(--teal);
+}
+
+.workflow-switch__copy {
+  min-width: 0;
+}
+
+.workflow-switch__copy strong,
+.workflow-switch__copy small {
+  display: block;
+}
+
+.workflow-switch__copy strong {
+  color: inherit;
+  font-family: var(--display);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.workflow-switch__copy small {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--quiet);
+  font-size: 0.69rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1.38fr) minmax(320px, 0.82fr);
@@ -640,6 +782,10 @@ input:disabled {
   width: min(1500px, 100%);
   margin: 0 auto;
   padding: 34px clamp(24px, 5vw, 72px) 68px;
+}
+
+.workflow-content .workspace {
+  padding-top: 20px;
 }
 
 .setup-card,
@@ -925,11 +1071,152 @@ input::placeholder {
 
 .processing-options__controls {
   display: grid;
-  grid-template-columns: repeat(3, minmax(112px, 1fr));
+  grid-template-columns: repeat(4, minmax(102px, 1fr));
   overflow: hidden;
   border: 1px solid var(--line-soft);
   border-radius: 9px;
   background: var(--control-bg-soft);
+}
+
+.powerpoint-config {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  margin-top: 32px;
+}
+
+.preview-badge {
+  flex: none;
+  padding: 6px 10px;
+  color: var(--amber);
+  border: 1px solid var(--warning-border);
+  border-radius: 999px;
+  background: var(--warning-soft);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.slide-storyboard {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.58fr) minmax(0, 1fr);
+  gap: 28px;
+  margin-top: 32px;
+  padding: 20px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: var(--panel-wash);
+}
+
+.slide-storyboard__frame {
+  position: relative;
+  display: grid;
+  place-content: center;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  color: var(--teal);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background:
+    linear-gradient(145deg, var(--card-glint), transparent 48%),
+    var(--deck-raised);
+  box-shadow: 0 16px 36px var(--card-shadow);
+}
+
+.slide-storyboard__frame::before {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  content: "";
+  background: var(--amber);
+  box-shadow: 0 0 0 5px var(--warning-focus-soft);
+}
+
+.slide-storyboard__frame > span {
+  font-family: var(--display);
+  font-size: clamp(2rem, 4vw, 3.4rem);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+
+.slide-storyboard__frame > i {
+  position: absolute;
+  left: 13%;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.slide-storyboard__frame > i:nth-of-type(1) {
+  right: 61%;
+  bottom: 19%;
+}
+
+.slide-storyboard__frame > i:nth-of-type(2) {
+  right: 35%;
+  bottom: 14%;
+}
+
+.slide-storyboard__frame > i:nth-of-type(3) {
+  right: 54%;
+  bottom: 9%;
+}
+
+.slide-storyboard__body {
+  align-self: center;
+  min-width: 0;
+}
+
+.slide-storyboard__status,
+.slide-storyboard__copy {
+  margin: 0;
+}
+
+.slide-storyboard__status {
+  color: var(--text-strong);
+  font-family: var(--display);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.slide-storyboard__copy {
+  max-width: 42rem;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.powerpoint-checkpoints {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 18px;
+  margin: 22px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.powerpoint-checkpoints li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--quiet);
+  font-size: 0.72rem;
+}
+
+.powerpoint-checkpoints li > span {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--deck);
 }
 
 .processing-option {
@@ -1675,6 +1962,10 @@ input::placeholder {
     grid-template-columns: 1fr;
   }
 
+  .processing-options__controls {
+    grid-template-columns: repeat(2, minmax(112px, 1fr));
+  }
+
   .run-card,
   .run-result,
   .activity-panel,
@@ -1745,6 +2036,24 @@ input::placeholder {
 
   .workspace {
     padding: 14px 12px 28px;
+  }
+
+  .workflow-switch-shell {
+    padding: 14px 12px 0;
+  }
+
+  .workflow-content .workspace {
+    padding-top: 12px;
+  }
+
+  .workflow-switch__tab {
+    gap: 10px;
+    padding-inline: 10px;
+  }
+
+  .workflow-switch__mark {
+    min-width: 51px;
+    padding-inline: 7px;
   }
 
   .setup-card,
@@ -1869,6 +2178,16 @@ input::placeholder {
 }
 
 @media (max-width: 620px) {
+  .settings-destination__heading {
+    display: block;
+  }
+
+  .settings-destination__heading > span {
+    display: block;
+    margin-top: 2px;
+    text-align: left;
+  }
+
   .settings-group--appearance {
     grid-template-columns: 1fr;
     gap: 11px;
@@ -1883,6 +2202,15 @@ input::placeholder {
     min-height: 38px;
     border-top: 1px solid var(--line-soft);
     border-left: 0;
+  }
+
+  .slide-storyboard {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+
+  .slide-storyboard__frame {
+    width: min(100%, 420px);
   }
 }
 
@@ -1905,7 +2233,32 @@ input::placeholder {
     min-width: 0;
   }
 
+  .workflow-switch {
+    gap: 3px;
+    padding: 3px;
+    border-radius: 13px;
+  }
+
+  .workflow-switch__tab {
+    min-height: 58px;
+    padding: 8px 9px;
+  }
+
+  .workflow-switch__mark {
+    min-width: 44px;
+    height: 30px;
+    font-size: 0.56rem;
+  }
+
+  .workflow-switch__copy small {
+    display: none;
+  }
+
   .processing-options__controls {
+    grid-template-columns: 1fr;
+  }
+
+  .powerpoint-checkpoints {
     grid-template-columns: 1fr;
   }
 
