@@ -37,6 +37,17 @@ function mergeConfiguration(base, override) {
   return merged;
 }
 
+function workflowJob(source, name) {
+  const marker = `  ${name}:\n`;
+  const start = source.indexOf(marker);
+  assert.notEqual(start, -1, `workflow job ${name} should exist`);
+  const remainder = source.slice(start + marker.length);
+  const nextJob = remainder.search(/\n  [a-z0-9-]+:\n/);
+  return nextJob === -1
+    ? source.slice(start)
+    : source.slice(start, start + marker.length + nextJob);
+}
+
 test("macOS bundle target is Apple Silicon app and DMG", () => {
   const target = assertBundleEnvironment("macos", {
     platform: "darwin",
@@ -200,21 +211,33 @@ test("Tauri platform merge retains shared resources and adds Windows PDFium", as
   assert.equal(merged.bundle.windows.nsis.installMode, "currentUser");
 });
 
-test("CI packages downloadable non-release apps on pushes and manual runs", async () => {
+test("CI skips macOS jobs and packages the Windows app on pushes and manual runs", async () => {
   const workflow = await readFile(
     path.join(ROOT, ".github", "workflows", "ci.yml"),
     "utf8",
   );
-  const packageCondition =
-    "    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'";
+  const macQualityJob = workflowJob(workflow, "macos-arm64-quality");
+  const macPackageJob = workflowJob(workflow, "macos-arm64-package");
+  const windowsPackageJob = workflowJob(workflow, "windows-x64-package");
 
-  assert.equal(workflow.split(packageCondition).length - 1, 2);
   assert.match(
-    workflow,
+    macQualityJob,
+    /^    if: \$\{\{ false \}\}$/m,
+  );
+  assert.match(
+    macPackageJob,
+    /^    if: \$\{\{ false \}\}$/m,
+  );
+  assert.match(
+    windowsPackageJob,
+    /^    if: github\.event_name == 'push' \|\| github\.event_name == 'workflow_dispatch'$/m,
+  );
+  assert.match(
+    macPackageJob,
     /name: horizon-traversal-macos-arm64-adhoc-unnotarized-non-release/,
   );
   assert.match(
-    workflow,
+    windowsPackageJob,
     /name: horizon-traversal-windows-x64-unsigned-non-release/,
   );
 });
