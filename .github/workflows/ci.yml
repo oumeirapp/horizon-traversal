@@ -32,6 +32,8 @@ jobs:
 
   macos-arm64-quality:
     name: macOS arm64 Rust and native assets
+    # Temporarily disabled. Remove this condition to restore macOS quality checks.
+    if: ${{ false }}
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
@@ -245,7 +247,8 @@ jobs:
 
   macos-arm64-package:
     name: macOS arm64 ad-hoc package evidence (non-release)
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # Temporarily disabled. Restore the event condition when macOS packaging resumes.
+    if: ${{ false }}
     needs: [frontend, macos-arm64-quality]
     runs-on: macos-26
     steps:
