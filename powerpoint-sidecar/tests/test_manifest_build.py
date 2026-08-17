@@ -13,6 +13,7 @@ from defusedxml import minidom
 from PIL import Image
 
 from horizon_pptx.cli import CANCELLED_EXIT_CODE, main
+from horizon_pptx.manifest import AssetError, _video_poster
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -139,6 +140,62 @@ def test_corrupt_selected_image_blanks_whole_ticket_and_blank_tickets_get_slides
             ) == template_archive.read("ppt/slides/_rels/slide1.xml.rels")
 
 
+def test_decompression_bomb_image_uses_the_blank_ticket_fallback(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = tmp_path / "oversized.png"
+    image.write_bytes(b"placeholder")
+    manifest = _write_manifest(
+        tmp_path,
+        [
+            {
+                "name": "P150",
+                "title": "Oversized selection",
+                "master": [_image_asset(image)],
+                "deliverables": [],
+            }
+        ],
+    )
+
+    def raise_decompression_bomb(*_args: object, **_kwargs: object) -> None:
+        raise Image.DecompressionBombError("pixel limit exceeded")
+
+    monkeypatch.setattr("horizon_pptx.manifest.Image.open", raise_decompression_bomb)
+
+    assert main(["build-manifest", str(manifest)]) == 0
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert events[-1]["summary"]["slidesCreated"] == 1
+    assert events[-1]["summary"]["blankSlides"] == 1
+    assert events[-1]["summary"]["warnings"] == 2
+    warnings = [event for event in events if event.get("level") == "warning"]
+    assert len(warnings) == events[-1]["summary"]["warnings"]
+    assert warnings[0]["message"].startswith("Selected media could not be used:")
+    assert warnings[1]["message"].startswith("Using a blank ticket slide:")
+    report = json.loads((tmp_path / "built.report.json").read_text(encoding="utf-8"))
+    assert report["slides"][0]["blankReason"].startswith("Corrupt selected asset:")
+    assert "pixel limit exceeded" in report["slides"][0]["blankReason"]
+    assert report["slides"][0]["warnings"][-1].startswith(
+        "Using a blank ticket slide:"
+    )
+
+
+def test_decompression_bomb_video_poster_is_an_asset_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    poster = tmp_path / "poster.jpg"
+    poster.write_bytes(b"placeholder")
+
+    def raise_decompression_bomb(*_args: object, **_kwargs: object) -> None:
+        raise Image.DecompressionBombError("poster pixel limit exceeded")
+
+    monkeypatch.setattr("horizon_pptx.manifest.Image.open", raise_decompression_bomb)
+
+    with pytest.raises(AssetError, match="poster pixel limit exceeded"):
+        _video_poster(poster, 1920, 1080)
+
+
 @pytest.mark.parametrize(
     ("extension", "content_type"),
     [("mp4", "video/mp4"), ("avi", "video/avi")],
@@ -171,6 +228,11 @@ def test_raw_video_bytes_relationships_timing_and_report_are_preserved(
     assert main(["build-manifest", str(manifest)]) == 0
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     progress = [event for event in events if event["event"] == "progress"]
+    warnings = [event for event in events if event.get("level") == "warning"]
+    assert len(warnings) == 1
+    assert "Low effective resolution" in warnings[0]["message"]
+    assert "source audit warning" not in warnings[0]["message"]
+    assert events[-1]["summary"]["warnings"] == 2
     assert [event["step"] for event in progress] == ["layout", "compose", "save"]
     assert set(progress[0]) >= {
         "protocol",

@@ -403,7 +403,7 @@ pub fn resize_videos(
                 ));
             }
             Err(error) => {
-                outcome.failed_files += 1;
+                outcome.record_failure(path.clone(), error.clone());
                 on_notice(PipelineNotice::error(
                     format!("Failed to resize video {}: {error}", path.display()),
                     Some(path),

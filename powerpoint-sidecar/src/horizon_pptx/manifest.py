@@ -264,7 +264,12 @@ def _decode_image(path: Path) -> tuple[int, int, bool, bool, bytes, str]:
                 buffer.getvalue(),
                 "png",
             )
-    except (OSError, ValueError, UnidentifiedImageError) as exc:
+    except (
+        OSError,
+        ValueError,
+        UnidentifiedImageError,
+        Image.DecompressionBombError,
+    ) as exc:
         raise AssetError(f"cannot decode image {path}: {exc}") from exc
 
 
@@ -288,7 +293,12 @@ def _video_poster(path: Path, width_px: int, height_px: int) -> bytes:
             buffer = io.BytesIO()
             canvas.save(buffer, format="PNG", optimize=False)
             return buffer.getvalue()
-    except (OSError, ValueError, UnidentifiedImageError) as exc:
+    except (
+        OSError,
+        ValueError,
+        UnidentifiedImageError,
+        Image.DecompressionBombError,
+    ) as exc:
         raise AssetError(f"cannot decode video poster {path}: {exc}") from exc
 
 

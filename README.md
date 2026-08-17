@@ -27,6 +27,10 @@ The processing order is fixed and deterministic:
 PDF conversion, image resizing, and video resizing can be enabled independently
 for each run. All three optimizations are enabled by default; disabled stages
 are omitted from the visible route and leave the copied assets unchanged.
+Image decompression is bounded to 1,800 MiB per file before the 1920x1080
+resize. Each asset run replaces `horizon_asset_log.json` at the output root;
+the JSON contains only per-file PDF-to-image, image-resize, and video-resize
+failures from that run, including their ticket, category, path, and diagnostic.
 
 ## PowerPoint workflow
 
@@ -52,6 +56,12 @@ a blank copy of the base template slide titled with the ticket folder name. The
 template introduction slide remains unchanged. Successful runs publish
 `Horizon Traversal.pptx` and `Horizon Traversal.layout-report.json` together in
 the configured PowerPoint output folder.
+
+When PowerPoint input is a prior asset-run output, PowerPoint mode reads
+`horizon_asset_log.json` before selecting slide media. Logged failed images and
+videos are excluded before priority and count limits are applied. The activity
+log identifies the affected content slide and ticket, the failed operation, and
+the full asset path; a failed PDF conversion is reported as a missing image.
 
 Settings keep separate native-directory destinations for asset runs and
 PowerPoint decks. Both `Asset output folder` and `PowerPoint output folder` are

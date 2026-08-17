@@ -905,7 +905,6 @@ function PowerPointWorkspace({
             : runFinished
               ? "Finished"
               : "Ready";
-
   return (
     <div className="workspace workspace--powerpoint">
       <section className="setup-card" aria-labelledby="powerpoint-setup-heading">
@@ -914,7 +913,6 @@ function PowerPointWorkspace({
             <p className="section-kicker">01 · Configure</p>
             <h2 id="powerpoint-setup-heading">Choose the presentation source</h2>
           </div>
-          <p>Each immediate ticket folder will become one slide.</p>
         </div>
 
         <div className="powerpoint-config">
@@ -933,17 +931,18 @@ function PowerPointWorkspace({
                 onChange={(event) => onInputChange(event.target.value)}
                 placeholder="Path to ticket folders"
                 aria-invalid={inputIssue !== undefined || selectionIssue !== undefined}
-                aria-describedby="powerpoint-input-help"
+                aria-describedby={
+                  run.phase === "idle" && inputPath.trim() === ""
+                    ? "powerpoint-input-help powerpoint-input-requirement"
+                    : "powerpoint-input-help"
+                }
                 disabled={locked}
               />
               <button type="button" onClick={onChooseFolder} disabled={locked}>
                 Choose folder
               </button>
             </div>
-            <div id="powerpoint-input-help">
-              {inputPath === "" ? (
-                <p className="field-message">Required · contains ticket folders</p>
-              ) : null}
+            <div className="powerpoint-input-help" id="powerpoint-input-help">
               <FieldIssue issue={inputIssue} />
               <FieldIssue issue={selectionIssue} />
             </div>
@@ -997,15 +996,24 @@ function PowerPointWorkspace({
                 <ArrowIcon />
               </button>
             )}
-            <p>
-              {canStart
-                ? "Ready. The combined deck will be saved to the PowerPoint output folder."
-                : run.phase === "running" || run.phase === "cancelling"
-                  ? "Keep this window open while the presentation is created."
-                  : runFinished
-                    ? "Start another presentation to choose a new source."
-                    : "A valid ticket root is required before creation."}
-            </p>
+            {run.phase === "idle" && inputPath.trim() === "" ? (
+              <p className="start-row__requirement" id="powerpoint-input-requirement">
+                A valid input path is required before creation
+              </p>
+            ) : null}
+            {runFinished && (
+              <div className="start-row__completion">
+                <button
+                  type="button"
+                  className="button button--repeat start-row__repeat"
+                  onClick={onReset}
+                >
+                  <ResetIcon />
+                  <span>Create another PowerPoint</span>
+                </button>
+                <p>Choose Create another PowerPoint to select a new source.</p>
+              </div>
+            )}
           </div>
           {run.cancelError === null ? null : (
             <p className="form-alert" role="alert">{run.cancelError}</p>
@@ -1165,6 +1173,7 @@ function App() {
     [powerpointInputPath, powerpointOutputPath],
   );
   const running = run.phase === "running";
+  const assetRunFinished = run.phase !== "idle" && run.phase !== "running";
   const powerPointRunning =
     powerPointRun.phase === "running" || powerPointRun.phase === "cancelling";
   const workflowSwitchLocked = running || powerPointRunning;
@@ -1573,7 +1582,6 @@ function App() {
               <p className="section-kicker">01 · Configure</p>
               <h2 id="setup-heading">Choose the transfer route</h2>
             </div>
-            <p>Folders stay on this device.</p>
           </div>
           <form onSubmit={handleStart} noValidate>
             <div className="field field--full">
@@ -1588,7 +1596,11 @@ function App() {
                   placeholder="Path to ticket folders"
                   disabled={assetConfigurationLocked}
                   aria-invalid={inputIssue !== undefined}
-                  aria-describedby="input-help"
+                  aria-describedby={
+                    run.phase === "idle" && inputPath.trim() === ""
+                      ? "input-help input-requirement"
+                      : "input-help"
+                  }
                 />
                 <button
                   type="button"
@@ -1598,8 +1610,7 @@ function App() {
                   Choose folder
                 </button>
               </div>
-              <div id="input-help">
-                {inputPath === "" ? <p className="field-message">Required · contains ticket folders</p> : null}
+              <div className="input-help" id="input-help">
                 <FieldIssue issue={inputIssue} />
               </div>
             </div>
@@ -1711,15 +1722,24 @@ function App() {
                 <span>{running ? "Processing…" : "Start processing"}</span>
                 <ArrowIcon />
               </button>
-              <p>
-                {canStart
-                  ? "Ready. Existing ticket outputs will be replaced safely."
-                  : running
-                    ? "Keep this window open while assets move."
-                    : assetConfigurationLocked
-                      ? "Choose Start another run to prepare another transfer."
-                      : "A valid route is required before processing."}
-              </p>
+              {run.phase === "idle" && inputPath.trim() === "" ? (
+                <p className="start-row__requirement" id="input-requirement">
+                  A valid input path is required before processing
+                </p>
+              ) : null}
+              {assetRunFinished && (
+                <div className="start-row__completion">
+                  <button
+                    type="button"
+                    className="button button--repeat start-row__repeat"
+                    onClick={handleNewRun}
+                  >
+                    <ResetIcon />
+                    <span>Start another run</span>
+                  </button>
+                  <p>Choose Start another run to prepare another transfer.</p>
+                </div>
+              )}
             </div>
           </form>
         </section>

@@ -92,4 +92,21 @@ pub struct ProcessingOutcome {
     pub processed: usize,
     pub changed: usize,
     pub failed_files: usize,
+    pub failures: Vec<ProcessingFailure>,
+}
+
+impl ProcessingOutcome {
+    pub fn record_failure(&mut self, path: PathBuf, message: impl Into<String>) {
+        self.failed_files += 1;
+        self.failures.push(ProcessingFailure {
+            path,
+            message: message.into(),
+        });
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessingFailure {
+    pub path: PathBuf,
+    pub message: String,
 }

@@ -101,14 +101,35 @@ def _build_manifest(path: Path) -> int:
             message=f"Validating selected media and laying out {ticket.name}.",
         )
         spec = prepare_ticket(ticket, cancellation.check)
+        if spec.blank_reason is not None and spec.blank_reason.startswith(
+            "Corrupt selected asset:"
+        ):
+            for warning in spec.warnings[len(ticket.warnings) :]:
+                _emit(
+                    "log",
+                    level="warning",
+                    ticket=ticket.name,
+                    message=f"Selected media could not be used: {warning}",
+                )
         specs.append(spec)
-        layouts.append(None if spec.blank_reason is not None else optimize_layout(spec))
+        layout = None if spec.blank_reason is not None else optimize_layout(spec)
+        layouts.append(layout)
+        if layout is not None:
+            for warning in layout.warnings:
+                _emit(
+                    "log",
+                    level="warning",
+                    ticket=ticket.name,
+                    message=warning,
+                )
         if spec.blank_reason is not None:
+            warning = f"Using a blank ticket slide: {spec.blank_reason}"
+            spec.warnings.append(warning)
             _emit(
                 "log",
                 level="warning",
                 ticket=ticket.name,
-                message=f"Using a blank ticket slide: {spec.blank_reason}",
+                message=warning,
             )
         cancellation.check()
 

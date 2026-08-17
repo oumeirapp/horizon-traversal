@@ -4,6 +4,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use pdfium_render::prelude::Pdfium;
 
+use super::asset_log::{
+    AssetFailure, AssetFailureCategory, AssetFailureLog, AssetFailureOperation, ASSET_LOG_NAME,
+};
 use super::collection::{
     category_output_path, collect_from_source, replace_ticket_output, OUTPUT_CATEGORY_ORDER,
 };
@@ -16,7 +19,9 @@ use super::ipc::{
 };
 use super::pdf::convert_pdfs;
 use super::report::{build_ticket_report, render_aggregate_report, ReportAsset, TicketReport};
-use super::types::{CollectionOutcome, NoticeLevel, PipelineNotice, ProcessingOutcome};
+use super::types::{
+    CollectionOutcome, NoticeLevel, PipelineNotice, ProcessingOutcome, SourceRootKind,
+};
 use super::videos::{resize_videos, MediaToolRunner};
 
 const AGGREGATE_REPORT_NAME: &str = "1. report.csv";
@@ -59,10 +64,6 @@ pub fn run_pipeline(
         Some(&plan.input),
     );
 
-    let aggregate_report_path = plan.output.join(AGGREGATE_REPORT_NAME);
-    let _ = fs::create_dir_all(&plan.output)
-        .and_then(|()| remove_regular_file_if_exists(&aggregate_report_path).map(|_| ()));
-    let mut ticket_reports = Vec::new();
     emit_log(
         events,
         None,
@@ -85,6 +86,31 @@ pub fn run_pipeline(
         elapsed_ms: 0,
         output_path: plan.output.to_string_lossy().into_owned(),
     };
+
+    let aggregate_report_path = plan.output.join(AGGREGATE_REPORT_NAME);
+    let asset_log_path = plan.output.join(ASSET_LOG_NAME);
+    if let Err(error) = initialize_asset_failure_log(&plan.output, &asset_log_path) {
+        summary.failed_tickets = total_tickets;
+        summary.errors += 1;
+        emit_log(
+            events,
+            None,
+            LogLevel::Error,
+            format!(
+                "Asset failure log initialization failed; pipeline aborted before processing: {error}"
+            ),
+            Some(&asset_log_path),
+        );
+        write_aggregate_report(&aggregate_report_path, &[], events, &mut summary);
+        summary.elapsed_ms = duration_ms(started.elapsed());
+        events.emit(PipelineEvent::PipelineCompleted {
+            summary: summary.clone(),
+        });
+        return summary;
+    }
+    let _ = remove_regular_file_if_exists(&aggregate_report_path);
+    let mut ticket_reports = Vec::new();
+    let mut asset_failures = Vec::new();
 
     for (offset, ticket) in plan.tickets.iter().enumerate() {
         let name = ticket_name(ticket);
@@ -114,31 +140,41 @@ pub fn run_pipeline(
         if let Some(report) = result.report {
             ticket_reports.push(report);
         }
+        asset_failures.extend(result.asset_failures);
     }
 
-    let aggregate_report = render_aggregate_report(&ticket_reports);
-    let aggregate_error = match write_utf8_atomic(&aggregate_report_path, &aggregate_report) {
-        Ok(()) => {
+    write_aggregate_report(
+        &aggregate_report_path,
+        &ticket_reports,
+        events,
+        &mut summary,
+    );
+
+    let asset_log = AssetFailureLog {
+        schema_version: 1,
+        failures: asset_failures,
+    };
+    match write_asset_failure_log(&asset_log_path, &asset_log) {
+        Ok(()) => emit_log(
+            events,
+            None,
+            LogLevel::Success,
+            format!(
+                "Asset failure log created with {} failure(s)",
+                asset_log.failures.len()
+            ),
+            Some(&asset_log_path),
+        ),
+        Err(error) => {
+            summary.errors += 1;
             emit_log(
                 events,
                 None,
-                LogLevel::Success,
-                "Aggregate report created".to_owned(),
-                Some(&aggregate_report_path),
+                LogLevel::Error,
+                format!("Asset failure log creation failed: {error}"),
+                Some(&asset_log_path),
             );
-            None
         }
-        Err(error) => Some(error),
-    };
-    if let Some(error) = aggregate_error {
-        summary.errors += 1;
-        emit_log(
-            events,
-            None,
-            LogLevel::Error,
-            format!("Aggregate report creation failed: {error}"),
-            Some(&aggregate_report_path),
-        );
     }
 
     summary.status = if total_tickets > 0
@@ -168,6 +204,7 @@ struct TicketResult {
     errors: usize,
     report_written: bool,
     report: Option<TicketReport>,
+    asset_failures: Vec<AssetFailure>,
 }
 
 impl Default for TicketResult {
@@ -181,6 +218,7 @@ impl Default for TicketResult {
             errors: 0,
             report_written: false,
             report: None,
+            asset_failures: Vec::new(),
         }
     }
 }
@@ -315,14 +353,22 @@ fn process_ticket(
             Some(&ticket_output),
         );
     } else if let Some(pdfium) = pdfium {
-        for category_output in &category_outputs {
+        for (source_kind, category_output) in
+            OUTPUT_CATEGORY_ORDER.into_iter().zip(&category_outputs)
+        {
             let pdf_outcome = {
                 let mut on_notice =
                     |notice| absorb_notice(events, &ticket_name, &mut result, notice);
                 convert_pdfs(category_output, pdfium, &mut on_notice)
             };
             match pdf_outcome {
-                Ok(outcome) => absorb_processing(&mut result, outcome),
+                Ok(outcome) => absorb_processing(
+                    &ticket_name,
+                    &mut result,
+                    outcome,
+                    AssetFailureOperation::PdfToImage,
+                    failure_category(source_kind),
+                ),
                 Err(error) => ticket_log(
                     events,
                     &ticket_name,
@@ -346,14 +392,22 @@ fn process_ticket(
 
     stage(events, &ticket_name, PipelineStage::Images);
     if processing_options.images {
-        for category_output in &category_outputs {
+        for (source_kind, category_output) in
+            OUTPUT_CATEGORY_ORDER.into_iter().zip(&category_outputs)
+        {
             let image_outcome = {
                 let mut on_notice =
                     |notice| absorb_notice(events, &ticket_name, &mut result, notice);
                 resize_images(category_output, &mut on_notice)
             };
             match image_outcome {
-                Ok(outcome) => absorb_processing(&mut result, outcome),
+                Ok(outcome) => absorb_processing(
+                    &ticket_name,
+                    &mut result,
+                    outcome,
+                    AssetFailureOperation::ImageResize,
+                    failure_category(source_kind),
+                ),
                 Err(error) => ticket_log(
                     events,
                     &ticket_name,
@@ -377,14 +431,22 @@ fn process_ticket(
 
     stage(events, &ticket_name, PipelineStage::Video);
     if processing_options.video {
-        for category_output in &category_outputs {
+        for (source_kind, category_output) in
+            OUTPUT_CATEGORY_ORDER.into_iter().zip(&category_outputs)
+        {
             let video_outcome = {
                 let mut on_notice =
                     |notice| absorb_notice(events, &ticket_name, &mut result, notice);
                 resize_videos(category_output, media_tools, &mut on_notice)
             };
             match video_outcome {
-                Ok(outcome) => absorb_processing(&mut result, outcome),
+                Ok(outcome) => absorb_processing(
+                    &ticket_name,
+                    &mut result,
+                    outcome,
+                    AssetFailureOperation::VideoResize,
+                    failure_category(source_kind),
+                ),
                 Err(error) => ticket_log(
                     events,
                     &ticket_name,
@@ -448,9 +510,68 @@ fn absorb_collection(
     absorb_notices(events, ticket, result, outcome.notices);
 }
 
-fn absorb_processing(result: &mut TicketResult, outcome: ProcessingOutcome) {
+fn absorb_processing(
+    ticket: &str,
+    result: &mut TicketResult,
+    outcome: ProcessingOutcome,
+    operation: AssetFailureOperation,
+    category: AssetFailureCategory,
+) {
     result.changed_files += outcome.changed;
     result.failed_files += outcome.failed_files;
+    result
+        .asset_failures
+        .extend(outcome.failures.into_iter().map(|failure| {
+            AssetFailure::new(operation, ticket, category, &failure.path, failure.message)
+        }));
+}
+
+fn failure_category(source_kind: SourceRootKind) -> AssetFailureCategory {
+    match source_kind {
+        SourceRootKind::MasterFiles => AssetFailureCategory::Master,
+        SourceRootKind::Deliverables => AssetFailureCategory::Deliverables,
+    }
+}
+
+fn initialize_asset_failure_log(output_root: &Path, path: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(output_root)?;
+    remove_regular_file_if_exists(path)?;
+    write_asset_failure_log(path, &AssetFailureLog::default())
+}
+
+fn write_asset_failure_log(path: &Path, log: &AssetFailureLog) -> std::io::Result<()> {
+    let contents = log
+        .render()
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    write_utf8_atomic(path, &contents)
+}
+
+fn write_aggregate_report(
+    path: &Path,
+    reports: &[TicketReport],
+    events: &impl PipelineEventSink,
+    summary: &mut PipelineSummary,
+) {
+    let aggregate_report = render_aggregate_report(reports);
+    match write_utf8_atomic(path, &aggregate_report) {
+        Ok(()) => emit_log(
+            events,
+            None,
+            LogLevel::Success,
+            "Aggregate report created".to_owned(),
+            Some(path),
+        ),
+        Err(error) => {
+            summary.errors += 1;
+            emit_log(
+                events,
+                None,
+                LogLevel::Error,
+                format!("Aggregate report creation failed: {error}"),
+                Some(path),
+            );
+        }
+    }
 }
 
 fn absorb_notices(

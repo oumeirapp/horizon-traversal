@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read};
@@ -13,13 +14,18 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_shell::ShellExt;
 use tempfile::Builder;
 
+use crate::pipeline::asset_log::{
+    AssetFailure, AssetFailureCategory, AssetFailureOperation, ASSET_LOG_NAME,
+};
 use crate::pipeline::fs_safety::metadata_is_link_like;
 use crate::pipeline::ipc::{AppError, LogLevel};
 use crate::pipeline::videos::{MediaToolRunner, NativeTool, TauriMediaToolRunner, ToolOutput};
 
+use super::asset_failures::load_asset_failures;
 use super::ipc::{PowerPointEvent, PowerPointRunStatus, PowerPointStep, PowerPointSummary};
 use super::scanner::{
-    scan_ticket, ManifestAsset, ManifestDocument, ManifestTicket, ScannedTicket, SelectedVideo,
+    scan_ticket_excluding, ManifestAsset, ManifestDocument, ManifestTicket, ScannedTicket,
+    SelectedVideo,
 };
 use super::state::{CancellationToken, PowerPointState};
 
@@ -163,6 +169,36 @@ pub fn run_powerpoint(
         .attach_cancel_path(run_id, &cancel_path)
         .map_err(|error| AppError::new("powerPointCancellationUnavailable", error.to_string()))?;
 
+    let loaded_asset_failures = load_asset_failures(&plan.input);
+    let relevant_asset_failures = loaded_asset_failures
+        .failures
+        .into_iter()
+        .filter(failure_affects_powerpoint)
+        .collect::<Vec<_>>();
+    let excluded_assets = excluded_asset_paths(&relevant_asset_failures);
+    let selected_ticket_names = plan
+        .tickets
+        .iter()
+        .map(|path| {
+            path.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<HashSet<_>>();
+    let mut asset_failures_by_ticket = HashMap::<String, Vec<AssetFailure>>::new();
+    let mut unmatched_asset_failures = Vec::new();
+    for failure in relevant_asset_failures {
+        if selected_ticket_names.contains(&failure.ticket) {
+            asset_failures_by_ticket
+                .entry(failure.ticket.clone())
+                .or_default()
+                .push(failure);
+        } else {
+            unmatched_asset_failures.push(failure);
+        }
+    }
+
     let mut scanned = Vec::with_capacity(plan.tickets.len());
     for ticket_path in &plan.tickets {
         let ticket_name = ticket_path
@@ -170,7 +206,7 @@ pub fn run_powerpoint(
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
-        let ticket = match scan_ticket(ticket_path) {
+        let ticket = match scan_ticket_excluding(ticket_path, &excluded_assets) {
             Ok(ticket) => ticket,
             Err(error) => {
                 let mut ticket = ScannedTicket::blank(
@@ -199,6 +235,33 @@ pub fn run_powerpoint(
     let mut progress = ProgressState::default();
     let mut host_warning_count = 0_usize;
     let mut forwarded_host_warnings = 0_usize;
+    let asset_log_path = plan.input.join(ASSET_LOG_NAME);
+    for warning in loaded_asset_failures.warnings {
+        host_warning_count += 1;
+        emit_log(
+            events,
+            run_id,
+            None,
+            LogLevel::Warning,
+            warning,
+            Some(&asset_log_path),
+        );
+    }
+    for failure in unmatched_asset_failures {
+        host_warning_count += 1;
+        emit_log(
+            events,
+            run_id,
+            None,
+            LogLevel::Warning,
+            format!(
+                "Ignored a recorded {} failure because ticket {:?} is not part of this PowerPoint run.",
+                failure_operation_name(failure.operation),
+                failure.ticket
+            ),
+            Some(Path::new(&failure.path)),
+        );
+    }
     for (offset, ticket) in scanned.iter().enumerate() {
         progress.advance(PowerPointStep::Inspect);
         emit_progress(
@@ -229,6 +292,12 @@ pub fn run_powerpoint(
                 warning.clone(),
                 None,
             );
+        }
+        if let Some(failures) = asset_failures_by_ticket.get(&ticket.name) {
+            for failure in failures {
+                host_warning_count += 1;
+                emit_asset_failure_warning(events, run_id, offset + 1, failure);
+            }
         }
     }
 
@@ -474,11 +543,7 @@ pub fn run_powerpoint(
     );
     let blank_slides = sidecar_summary.blank_slides;
     let summary = PowerPointSummary {
-        status: if blank_slides > 0 {
-            PowerPointRunStatus::PartialSuccess
-        } else {
-            PowerPointRunStatus::Success
-        },
+        status: completed_status(blank_slides, warning_count),
         total_tickets,
         slides_created: sidecar_summary.slides_created,
         blank_slides,
@@ -862,6 +927,74 @@ fn emit_log(
     });
 }
 
+fn asset_failure_warning(content_slide: usize, failure: &AssetFailure) -> String {
+    let media = match failure.operation {
+        AssetFailureOperation::PdfToImage | AssetFailureOperation::ImageResize => "an image",
+        AssetFailureOperation::VideoResize => "a video",
+    };
+    format!(
+        "Content slide {content_slide} for ticket {:?} is missing {media} because prior asset processing failed during {}: {}",
+        failure.ticket,
+        failure_operation_name(failure.operation),
+        failure.message.trim()
+    )
+}
+
+fn emit_asset_failure_warning(
+    events: &impl PowerPointEventSink,
+    run_id: &str,
+    content_slide: usize,
+    failure: &AssetFailure,
+) {
+    emit_log(
+        events,
+        run_id,
+        Some(&failure.ticket),
+        LogLevel::Warning,
+        asset_failure_warning(content_slide, failure),
+        Some(Path::new(&failure.path)),
+    );
+}
+
+fn failure_affects_powerpoint(failure: &AssetFailure) -> bool {
+    !matches!(
+        (failure.operation, failure.category),
+        (
+            AssetFailureOperation::VideoResize,
+            AssetFailureCategory::Master
+        )
+    )
+}
+
+fn excluded_asset_paths(failures: &[AssetFailure]) -> HashSet<PathBuf> {
+    failures
+        .iter()
+        .filter(|failure| {
+            matches!(
+                failure.operation,
+                AssetFailureOperation::ImageResize | AssetFailureOperation::VideoResize
+            )
+        })
+        .map(|failure| PathBuf::from(&failure.path))
+        .collect()
+}
+
+fn failure_operation_name(operation: AssetFailureOperation) -> &'static str {
+    match operation {
+        AssetFailureOperation::PdfToImage => "pdfToImage",
+        AssetFailureOperation::ImageResize => "imageResize",
+        AssetFailureOperation::VideoResize => "videoResize",
+    }
+}
+
+fn completed_status(blank_slides: usize, warnings: usize) -> PowerPointRunStatus {
+    if blank_slides > 0 || warnings > 0 {
+        PowerPointRunStatus::PartialSuccess
+    } else {
+        PowerPointRunStatus::Success
+    }
+}
+
 fn cancelled_summary(
     total_tickets: usize,
     warnings: usize,
@@ -1079,7 +1212,18 @@ mod tests {
 
     use tempfile::tempdir;
 
+    use crate::pipeline::asset_log::AssetFailureLog;
+
     use super::*;
+
+    #[derive(Default)]
+    struct RecordingEvents(Mutex<Vec<PowerPointEvent>>);
+
+    impl PowerPointEventSink for RecordingEvents {
+        fn emit(&self, event: PowerPointEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
 
     struct PosterTools {
         probe: Vec<u8>,
@@ -1324,5 +1468,102 @@ mod tests {
         assert_eq!(merge_warning_counts(4, 3, 2), 5);
         assert_eq!(merge_warning_counts(4, 2, 2), 4);
         assert_eq!(merge_warning_counts(1, 4, 0), 5);
+    }
+
+    #[test]
+    fn recorded_failure_warning_identifies_content_slide_ticket_and_media() {
+        let failure = AssetFailure {
+            operation: AssetFailureOperation::VideoResize,
+            ticket: "P12 Launch".to_owned(),
+            category: crate::pipeline::asset_log::AssetFailureCategory::Deliverables,
+            path: "/output/P12 Launch/Deliverables/launch.mp4".to_owned(),
+            message: "ffmpeg ran out of memory".to_owned(),
+        };
+
+        assert_eq!(
+            asset_failure_warning(3, &failure),
+            "Content slide 3 for ticket \"P12 Launch\" is missing a video because prior asset processing failed during videoResize: ffmpeg ran out of memory"
+        );
+    }
+
+    #[test]
+    fn recorded_failure_log_excludes_before_limits_and_emits_the_full_path() {
+        let temp = tempdir().unwrap();
+        let ticket = temp.path().join("P20 Campaign");
+        let deliverables = ticket.join("Deliverables");
+        fs::create_dir_all(&deliverables).unwrap();
+        for number in 1..=7 {
+            fs::write(deliverables.join(format!("image{number}.jpg")), b"fixture").unwrap();
+        }
+        let failed_path = deliverables.join("image1.jpg");
+        let failure = AssetFailure::new(
+            AssetFailureOperation::ImageResize,
+            "P20 Campaign",
+            AssetFailureCategory::Deliverables,
+            &failed_path,
+            "decode allocation exceeded",
+        );
+        let document = AssetFailureLog {
+            schema_version: 1,
+            failures: vec![failure.clone()],
+        };
+        fs::write(temp.path().join(ASSET_LOG_NAME), document.render().unwrap()).unwrap();
+
+        let loaded = load_asset_failures(temp.path());
+        let relevant = loaded
+            .failures
+            .into_iter()
+            .filter(failure_affects_powerpoint)
+            .collect::<Vec<_>>();
+        let excluded = excluded_asset_paths(&relevant);
+        let scanned = scan_ticket_excluding(&ticket, &excluded).unwrap();
+
+        assert_eq!(scanned.deliverable_images.len(), 6);
+        assert!(scanned
+            .deliverable_images
+            .iter()
+            .any(|image| image.path.ends_with("image7.jpg")));
+        assert!(scanned
+            .deliverable_images
+            .iter()
+            .all(|image| image.path != failed_path));
+
+        let events = RecordingEvents::default();
+        emit_asset_failure_warning(&events, "run-1", 1, &failure);
+        let emitted = events.0.lock().unwrap();
+        assert_eq!(emitted.len(), 1);
+        assert!(matches!(
+            &emitted[0],
+            PowerPointEvent::Log {
+                ticket: Some(ticket),
+                level: LogLevel::Warning,
+                message,
+                path: Some(path),
+                ..
+            } if ticket == "P20 Campaign"
+                && message.contains("Content slide 1")
+                && message.contains("imageResize")
+                && path == &failed_path.to_string_lossy()
+        ));
+    }
+
+    #[test]
+    fn master_video_failures_are_not_reported_as_missing_slide_media() {
+        let failure = AssetFailure {
+            operation: AssetFailureOperation::VideoResize,
+            ticket: "P21".to_owned(),
+            category: AssetFailureCategory::Master,
+            path: "/output/P21/Master/ignored.mp4".to_owned(),
+            message: "decode failed".to_owned(),
+        };
+
+        assert!(!failure_affects_powerpoint(&failure));
+    }
+
+    #[test]
+    fn completed_runs_with_any_warning_use_partial_success() {
+        assert_eq!(completed_status(0, 1), PowerPointRunStatus::PartialSuccess);
+        assert_eq!(completed_status(1, 0), PowerPointRunStatus::PartialSuccess);
+        assert_eq!(completed_status(0, 0), PowerPointRunStatus::Success);
     }
 }

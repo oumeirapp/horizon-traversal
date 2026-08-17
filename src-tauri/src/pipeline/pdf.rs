@@ -125,7 +125,7 @@ fn convert_pdfs_with_remover(
                 }
             }
             Err(error) => {
-                outcome.failed_files += 1;
+                outcome.record_failure(path.clone(), error.clone());
                 on_notice(PipelineNotice::error(
                     format!("Failed to convert PDF {}: {error}", path.display()),
                     Some(path),

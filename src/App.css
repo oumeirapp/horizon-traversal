@@ -1399,7 +1399,36 @@ input::placeholder {
   padding-top: 8px;
 }
 
+.start-row__completion {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+}
+
+.start-row > .button,
+.start-row__completion > .button {
+  flex: none;
+  width: 210px;
+  max-width: 100%;
+  min-width: 0;
+  padding-inline: 12px;
+  line-height: 1.2;
+}
+
+.powerpoint-start-row .start-row__completion > .button {
+  width: 250px;
+}
+
+.start-row__repeat svg {
+  flex: none;
+  color: currentColor;
+}
+
 .start-row p {
+  flex: 1;
+  min-width: 0;
   max-width: 28rem;
   color: var(--quiet);
   font-size: 0.76rem;
@@ -1444,6 +1473,27 @@ input::placeholder {
 .button--primary:not(:disabled):hover {
   transform: translateY(-1px);
   background: var(--accent-hover);
+}
+
+.button--repeat {
+  color: var(--on-accent);
+  border-color: var(--teal);
+  background: var(--teal);
+  box-shadow: 0 10px 30px var(--accent-shadow);
+}
+
+.button--repeat:not(:disabled):hover {
+  transform: translateY(-1px);
+  background: var(--accent-hover);
+}
+
+.start-row .button:disabled {
+  opacity: 1;
+  color: var(--quiet);
+  border-color: var(--line-soft);
+  background: var(--control-bg-soft);
+  box-shadow: none;
+  filter: saturate(0.2);
 }
 
 .button--secondary {
@@ -1994,14 +2044,29 @@ input::placeholder {
   overflow-wrap: anywhere;
 }
 
-.log-entry code {
-  display: block;
-  overflow: hidden;
+.log-entry__path {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
   margin-top: 2px;
   color: var(--log-meta);
+}
+
+.log-entry__path span {
+  padding-top: 1px;
+  color: var(--quiet);
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.log-entry__path code {
+  display: block;
+  min-width: 0;
   font-family: inherit;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .log-level {
@@ -2179,6 +2244,13 @@ input::placeholder {
   .start-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .start-row__completion {
+    align-items: stretch;
+    flex: none;
+    flex-direction: column;
+    gap: 10px;
   }
 
   .run-card__heading {

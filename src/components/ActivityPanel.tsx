@@ -203,7 +203,10 @@ function ActivityPanelComponent({
                     <div>
                       <p>{entry.message}</p>
                       {entry.path === null ? null : (
-                        <code title={entry.path}>{entry.path}</code>
+                        <div className="log-entry__path">
+                          <span>Path</span>
+                          <code>{entry.path}</code>
+                        </div>
                       )}
                     </div>
                   </li>

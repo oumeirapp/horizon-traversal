@@ -154,6 +154,33 @@ describe("Horizon Traversal workbench", () => {
       screen.getByRole("tab", { name: /PowerPoint only/ }),
     ).toHaveAttribute("aria-selected", "false");
     expect(screen.getByRole("button", { name: "Start processing" })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Start another run" }),
+    ).not.toBeInTheDocument();
+    const assetStartRow = screen
+      .getByRole("button", { name: "Start processing" })
+      .closest(".start-row");
+    expect(
+      within(assetStartRow as HTMLElement).getByText(
+        "A valid input path is required before processing",
+      ),
+    ).toHaveClass("start-row__requirement");
+    expect(screen.getByLabelText("Input folder")).toHaveAttribute(
+      "aria-describedby",
+      "input-help input-requirement",
+    );
+    expect(
+      within(document.getElementById("input-help") as HTMLElement).queryByText(
+        "A valid input path is required before processing",
+      ),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Folders stay on this device.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Ready. Existing ticket outputs will be replaced safely."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("A valid route is required before processing."),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Choose an input folder")).toBeVisible();
     expect(screen.queryByLabelText("Output folder")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Input folder").closest(".field")).toHaveClass(
@@ -186,6 +213,14 @@ describe("Horizon Traversal workbench", () => {
     fireEvent.change(screen.getByLabelText("Input folder"), {
       target: { value: "/asset-tickets" },
     });
+    const assetStartRow = screen
+      .getByRole("button", { name: "Start processing" })
+      .closest(".start-row");
+    expect(
+      within(assetStartRow as HTMLElement).queryByText(
+        "A valid input path is required before processing",
+      ),
+    ).not.toBeInTheDocument();
 
     const workflowTabs = screen.getByRole("tablist", { name: "Workflow mode" });
     expect(workflowTabs).toHaveAttribute("data-active-tab", "assets");
@@ -200,6 +235,28 @@ describe("Horizon Traversal workbench", () => {
     expect(powerpointTab).toHaveAttribute("aria-selected", "true");
     expect(workflowTabs).toHaveAttribute("data-active-tab", "powerpoint");
     expect(screen.getAllByText("Set up presentation")[0]).toBeVisible();
+    const powerpointSetup = screen.getByRole("region", {
+      name: "Choose the presentation source",
+    });
+    const powerpointStartRow = within(powerpointSetup)
+      .getByRole("button", { name: "Create PowerPoint" })
+      .closest(".start-row");
+    expect(
+      within(powerpointStartRow as HTMLElement).getByText(
+        "A valid input path is required before creation",
+      ),
+    ).toHaveClass("start-row__requirement");
+    expect(screen.getByLabelText("Root folder")).toHaveAttribute(
+      "aria-describedby",
+      "powerpoint-input-help powerpoint-input-requirement",
+    );
+    expect(
+      within(
+        document.getElementById("powerpoint-input-help") as HTMLElement,
+      ).queryByText("A valid input path is required before creation"),
+    ).not.toBeInTheDocument();
+    expect(powerpointStartRow?.querySelector(".start-row__completion")).toBeNull();
+    expect(screen.queryByText("Each immediate ticket folder will become one slide.")).not.toBeInTheDocument();
     expect(
       screen.queryByLabelText("Ticket filter Optional"),
     ).not.toBeInTheDocument();
@@ -209,6 +266,11 @@ describe("Horizon Traversal workbench", () => {
       fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
       await Promise.resolve();
     });
+    expect(
+      within(powerpointStartRow as HTMLElement).queryByText(
+        "A valid input path is required before creation",
+      ),
+    ).not.toBeInTheDocument();
     expect(nativeMocks.openDialog).toHaveBeenLastCalledWith({
       directory: true,
       multiple: false,
@@ -237,6 +299,14 @@ describe("Horizon Traversal workbench", () => {
       screen.getByText(/Ticket and slide activity will appear here/),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Create PowerPoint" })).toBeEnabled();
+    expect(
+      within(powerpointStartRow as HTMLElement).queryByText(
+        "A valid input path is required before creation",
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Ready. The combined deck will be saved to the PowerPoint output folder."),
+    ).not.toBeInTheDocument();
     expect(nativeMocks.startPipeline).not.toHaveBeenCalled();
     expect(nativeMocks.startPowerPoint).not.toHaveBeenCalled();
 
@@ -290,6 +360,14 @@ describe("Horizon Traversal workbench", () => {
     expect(screen.getByRole("heading", { name: "Ticket preview" })).toBeVisible();
     expect(screen.queryByText(/Ticket 1 of/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create PowerPoint" })).toBeDisabled();
+    const powerpointStartRow = screen
+      .getByRole("button", { name: "Create PowerPoint" })
+      .closest(".start-row");
+    expect(
+      within(powerpointStartRow as HTMLElement).queryByText(
+        "A valid input path is required before creation",
+      ),
+    ).not.toBeInTheDocument();
     expect(nativeMocks.startPipeline).not.toHaveBeenCalled();
     expect(nativeMocks.startPowerPoint).not.toHaveBeenCalled();
   });
@@ -348,6 +426,9 @@ describe("Horizon Traversal workbench", () => {
       fireEvent.click(screen.getByRole("button", { name: "Create PowerPoint" }));
       await Promise.resolve();
     });
+    expect(
+      screen.queryByRole("button", { name: "Create another PowerPoint" }),
+    ).not.toBeInTheDocument();
 
     expect(nativeMocks.startPowerPoint).toHaveBeenCalledWith(
       {
@@ -386,6 +467,27 @@ describe("Horizon Traversal workbench", () => {
     });
 
     expect(screen.getByRole("heading", { name: "PowerPoint ready" })).toBeVisible();
+    const powerpointSetup = screen.getByRole("region", {
+      name: "Choose the presentation source",
+    });
+    const createAnotherPowerPoint = within(powerpointSetup).getByRole("button", {
+      name: "Create another PowerPoint",
+    });
+    expect(createAnotherPowerPoint).toBeVisible();
+    expect(createAnotherPowerPoint).toHaveClass("button--repeat");
+    const powerpointCompletion = createAnotherPowerPoint.closest(".start-row__completion");
+    expect(powerpointCompletion).not.toBeNull();
+    expect(
+      within(powerpointCompletion as HTMLElement).getByText(
+        "Choose Create another PowerPoint to select a new source.",
+      ),
+    ).toBeVisible();
+    expect(
+      within(powerpointSetup).getByRole("button", { name: "Create PowerPoint" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Start another presentation" }),
+    ).toBeVisible();
     const openPresentation = screen.getByRole("button", {
       name: "Open presentation",
     });
@@ -394,6 +496,84 @@ describe("Horizon Traversal workbench", () => {
       await Promise.resolve();
     });
     expect(nativeMocks.openPowerPointOutput).toHaveBeenCalledOnce();
+
+    fireEvent.click(createAnotherPowerPoint);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(360);
+    });
+    expect(screen.queryByRole("heading", { name: "PowerPoint ready" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Root folder")).toHaveValue("/powerpoint-tickets");
+    expect(screen.getByLabelText("Root folder")).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Create PowerPoint" })).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "Create another PowerPoint" }),
+    ).not.toBeInTheDocument();
+    expect(nativeMocks.startPowerPoint).toHaveBeenCalledOnce();
+  });
+
+  it("shows and searches the full path for an asset omitted from a content slide", async () => {
+    const failedAssetPath =
+      "/powerpoint-tickets/P2 Brand/Deliverables/Campaign/Approved/oversized-key-visual.png";
+    const warningMessage =
+      'Content slide 2 for ticket "P2 Brand" is missing an image because prior asset processing failed during imageResize: image requires 1,900 MiB.';
+
+    nativeMocks.startPowerPoint.mockImplementation(
+      (_request: unknown, onEvent: (event: PowerPointEvent) => void) => {
+        onEvent({
+          type: "powerpointStarted",
+          runId: "pptx-missing-asset",
+          totalTickets: 2,
+          totalUnits: 10,
+        });
+        onEvent({
+          type: "log",
+          runId: "pptx-missing-asset",
+          ticket: "P2 Brand",
+          level: "warning",
+          message: warningMessage,
+          path: failedAssetPath,
+          timestampMs: 1_750_000_000_000,
+        });
+        return new Promise<PowerPointSummary>(() => undefined);
+      },
+    );
+
+    render(<App />);
+    await settleSettings();
+    await switchToPowerPoint();
+    fireEvent.change(screen.getByLabelText("Root folder"), {
+      target: { value: "/powerpoint-tickets" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(360);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create PowerPoint" }));
+      await vi.advanceTimersByTimeAsync(20);
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: /Warnings 1/ }));
+    const slideGroup = screen
+      .getByRole("heading", { name: "P2 Brand", level: 3 })
+      .closest(".log-group");
+    expect(slideGroup).not.toBeNull();
+    expect(
+      within(slideGroup as HTMLElement).getByText(warningMessage),
+    ).toBeVisible();
+    const renderedPath = within(slideGroup as HTMLElement).getByText(
+      failedAssetPath,
+    );
+    expect(renderedPath.tagName).toBe("CODE");
+    expect(renderedPath.closest(".log-entry__path")).toHaveTextContent(
+      `Path${failedAssetPath}`,
+    );
+
+    const search = screen.getByRole("searchbox", { name: "Search run activity" });
+    fireEvent.change(search, { target: { value: "oversized-key-visual.png" } });
+    expect(screen.getByText(failedAssetPath)).toBeVisible();
+
+    fireEvent.change(search, { target: { value: "content slide 2" } });
+    expect(screen.getByText(warningMessage)).toBeVisible();
   });
 
   it("requests cooperative cancellation for the active PowerPoint run", async () => {
@@ -480,6 +660,9 @@ describe("Horizon Traversal workbench", () => {
       screen.getByText(
         "Creation was cancelled before a presentation was published.",
       ),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Create another PowerPoint" }),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: "Open presentation" })).not.toBeInTheDocument();
   });
@@ -1010,6 +1193,15 @@ describe("Horizon Traversal workbench", () => {
       await vi.advanceTimersByTimeAsync(20);
     });
     expect(screen.getByRole("button", { name: "Processing…" })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Start another run" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Keep this window open while assets move."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Keep this window open while the presentation is created."),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Resize video")).toBeVisible();
     expect(screen.getByLabelText("Input folder")).toBeDisabled();
     expect(screen.getByRole("tab", { name: /PowerPoint only/ })).toBeDisabled();
@@ -1047,7 +1239,19 @@ describe("Horizon Traversal workbench", () => {
     expect(screen.getByRole("heading", { name: "Transfer complete" })).toBeVisible();
     expect(screen.getByText("2 tickets matched")).toBeVisible();
 
-    const resetButton = screen.getByRole("button", { name: "Start another run" });
+    const setup = screen.getByRole("region", { name: "Choose the transfer route" });
+    const result = screen.getByRole("region", { name: "Transfer complete" });
+    const resetButton = within(setup).getByRole("button", { name: "Start another run" });
+    expect(resetButton).toHaveClass("button--repeat");
+    const completion = resetButton.closest(".start-row__completion");
+    expect(completion).not.toBeNull();
+    expect(
+      within(completion as HTMLElement).getByText(
+        "Choose Start another run to prepare another transfer.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Input folder")).toBeDisabled();
+    expect(within(result).getByRole("button", { name: "Start another run" })).toBeVisible();
     const resetIcon = resetButton.querySelector(".lucide-rotate-ccw");
     expect(resetIcon).toBeInTheDocument();
     expect(resetIcon).toHaveAttribute("width", "20");

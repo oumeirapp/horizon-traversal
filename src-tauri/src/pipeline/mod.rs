@@ -1,3 +1,4 @@
+pub mod asset_log;
 pub mod collection;
 pub mod coordinator;
 pub mod discovery;

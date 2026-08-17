@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
@@ -159,6 +159,13 @@ pub fn sort_ticket_paths_naturally(paths: &mut [PathBuf]) {
 }
 
 pub fn scan_ticket(ticket: &Path) -> Result<ScannedTicket, ScanError> {
+    scan_ticket_excluding(ticket, &HashSet::new())
+}
+
+pub fn scan_ticket_excluding(
+    ticket: &Path,
+    excluded_assets: &HashSet<PathBuf>,
+) -> Result<ScannedTicket, ScanError> {
     let name = ticket
         .file_name()
         .unwrap_or_default()
@@ -184,7 +191,12 @@ pub fn scan_ticket(ticket: &Path) -> Result<ScannedTicket, ScanError> {
 
     let mut master_images = Vec::new();
     if let Some(folder) = master_folder {
-        for candidate in section_candidates(&folder, &metadata.priority.master, &mut warnings)? {
+        for candidate in section_candidates(
+            &folder,
+            &metadata.priority.master,
+            excluded_assets,
+            &mut warnings,
+        )? {
             if is_image(&candidate.path) {
                 master_images.push(candidate);
             } else if is_video(&candidate.path) {
@@ -213,7 +225,7 @@ pub fn scan_ticket(ticket: &Path) -> Result<ScannedTicket, ScanError> {
     if let Some(folder) = deliverables_folder {
         let mut priorities = metadata.priority.adapt.clone();
         priorities.extend(metadata.priority.deliverables.clone());
-        for candidate in section_candidates(&folder, &priorities, &mut warnings)? {
+        for candidate in section_candidates(&folder, &priorities, excluded_assets, &mut warnings)? {
             if is_image(&candidate.path) {
                 deliverable_images.push(candidate);
             } else if is_video(&candidate.path) {
@@ -360,6 +372,7 @@ fn find_section(ticket: &Path, expected: &str) -> Result<Option<PathBuf>, ScanEr
 fn section_candidates(
     folder: &Path,
     priorities: &HashMap<String, u8>,
+    excluded_assets: &HashSet<PathBuf>,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<Candidate>, ScanError> {
     let mut candidates = Vec::new();
@@ -377,6 +390,9 @@ fn section_candidates(
             continue;
         }
         if !file_type.is_file() || (!is_image(&path) && !is_video(&path)) {
+            continue;
+        }
+        if excluded_assets.contains(&path) {
             continue;
         }
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -585,6 +601,70 @@ mod tests {
         assert_eq!(
             scanned.deliverable_images[1].path.file_name().unwrap(),
             "b.jpg"
+        );
+    }
+
+    #[test]
+    fn exclusions_are_applied_before_selection_limits() {
+        let temp = tempdir().unwrap();
+        let ticket = temp.path().join("P3");
+        let deliverables = ticket.join("Deliverables");
+        fs::create_dir_all(&deliverables).unwrap();
+        for name in [
+            "image1.jpg",
+            "image2.jpg",
+            "image3.jpg",
+            "image4.jpg",
+            "image5.jpg",
+            "image6.jpg",
+            "image7.jpg",
+        ] {
+            file(&deliverables.join(name));
+        }
+        let excluded = HashSet::from([deliverables.join("image1.jpg")]);
+
+        let scanned = scan_ticket_excluding(&ticket, &excluded).unwrap();
+
+        assert_eq!(scanned.deliverable_images.len(), 6);
+        assert_eq!(
+            scanned
+                .deliverable_images
+                .iter()
+                .map(|image| image.path.file_name().unwrap().to_string_lossy())
+                .collect::<Vec<_>>(),
+            [
+                "image2.jpg",
+                "image3.jpg",
+                "image4.jpg",
+                "image5.jpg",
+                "image6.jpg",
+                "image7.jpg",
+            ]
+        );
+    }
+
+    #[test]
+    fn excluding_every_media_candidate_uses_the_blank_slide_fallback() {
+        let temp = tempdir().unwrap();
+        let ticket = temp.path().join("P4");
+        let master = ticket.join("Master");
+        let deliverables = ticket.join("Deliverables");
+        fs::create_dir_all(&master).unwrap();
+        fs::create_dir_all(&deliverables).unwrap();
+        let image = master.join("failed.jpg");
+        let video = deliverables.join("failed.mp4");
+        file(&image);
+        file(&video);
+        let excluded = HashSet::from([image, video]);
+
+        let scanned = scan_ticket_excluding(&ticket, &excluded).unwrap();
+
+        assert!(scanned.master.is_empty());
+        assert!(scanned.deliverable_images.is_empty());
+        assert!(scanned.deliverable_videos.is_empty());
+        assert_eq!(
+            scanned.blank_reason.as_deref(),
+            Some("No usable assets were found in Master or Deliverables.")
         );
     }
 

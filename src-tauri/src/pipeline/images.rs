@@ -4,11 +4,11 @@ use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use image::codecs::jpeg::JpegEncoder;
-use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+use image::codecs::png::{CompressionType, FilterType, PngDecoder, PngEncoder};
 use image::imageops::FilterType as ResizeFilter;
 use image::{
-    DynamicImage, ExtendedColorType, ImageBuffer, ImageEncoder, ImageError, ImageFormat,
-    ImageReader, Luma, RgbImage,
+    DynamicImage, ExtendedColorType, ImageBuffer, ImageDecoder, ImageEncoder, ImageError,
+    ImageFormat, Limits, Luma, RgbImage,
 };
 use jpeg_decoder::{CodingProcess, Decoder as JpegDecoder, PixelFormat as JpegPixelFormat};
 use thiserror::Error;
@@ -20,9 +20,7 @@ use super::types::{PipelineNotice, ProcessingOutcome};
 pub const MAX_IMAGE_WIDTH: u32 = 1_920;
 pub const MAX_IMAGE_HEIGHT: u32 = 1_080;
 pub const JPEG_QUALITY: u8 = 70;
-pub const JPEG_DECODE_BUFFER_LIMIT_BYTES: usize = 128 * 1024 * 1024;
-pub const PROGRESSIVE_JPEG_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
-pub const PNG_DECODE_LIMIT_BYTES: u64 = 512 * 1024 * 1024;
+pub const IMAGE_DECODE_ALLOCATION_LIMIT_BYTES: u64 = 1_800 * 1024 * 1024;
 
 const FORMAT_PROBE_BYTES: usize = 32;
 
@@ -31,6 +29,24 @@ struct ResizeChange {
     resized: (u32, u32),
     detected_format: ImageFormat,
     destination_format: ImageFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PngDecodePlan {
+    dimensions: (u32, u32),
+    output_bytes: u64,
+    inner_allocation_budget: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct JpegAllocationPlan {
+    coefficient_bytes: u64,
+    coefficient_work_bytes: u64,
+    component_plane_bytes: u64,
+    decoded_bytes: u64,
+    conversion_bytes: u64,
+    total_bytes: u64,
+    decoder_output_limit: usize,
 }
 
 #[derive(Debug, Error)]
@@ -144,7 +160,7 @@ pub fn resize_images(
                 ));
             }
             Err(error) => {
-                outcome.failed_files += 1;
+                outcome.record_failure(path.clone(), error.clone());
                 on_notice(PipelineNotice::error(
                     format!("Failed to resize image {}: {error}", path.display()),
                     Some(path),
@@ -169,13 +185,24 @@ fn is_resizable_image(path: &Path) -> bool {
 fn resize_image(path: &Path) -> Result<Option<ResizeChange>, String> {
     let detected_format = detect_image_format(path)?;
     let destination_format = destination_format(path)?;
-    let original = image_dimensions(path, detected_format)?;
+    let png_plan = if detected_format == ImageFormat::Png {
+        Some(inspect_png(path)?)
+    } else {
+        None
+    };
+    let original = match png_plan {
+        Some(plan) => plan.dimensions,
+        None => jpeg_dimensions(path)?,
+    };
     let Some(target) = target_dimensions(original.0, original.1) else {
         return Ok(None);
     };
     let image = match detected_format {
         ImageFormat::Jpeg => decode_scaled_jpeg(path, original, target)?,
-        ImageFormat::Png => decode_png(path, original)?,
+        ImageFormat::Png => decode_png(
+            path,
+            &png_plan.ok_or_else(|| "PNG decode plan is unavailable".to_owned())?,
+        )?,
         format => {
             return Err(format!(
                 "unsupported image content format {}; only JPEG and PNG are supported",
@@ -221,20 +248,14 @@ fn destination_format(path: &Path) -> Result<ImageFormat, String> {
     }
 }
 
-fn image_dimensions(path: &Path, format: ImageFormat) -> Result<(u32, u32), String> {
-    if format == ImageFormat::Jpeg {
-        let file = File::open(path).map_err(|error| error.to_string())?;
-        let mut decoder = JpegDecoder::new(BufReader::new(file));
-        decoder.read_info().map_err(|error| error.to_string())?;
-        let info = decoder
-            .info()
-            .ok_or_else(|| "JPEG metadata is unavailable".to_owned())?;
-        return Ok((u32::from(info.width), u32::from(info.height)));
-    }
-
-    let mut reader = ImageReader::open(path).map_err(|error| error.to_string())?;
-    reader.set_format(format);
-    reader.into_dimensions().map_err(|error| error.to_string())
+fn jpeg_dimensions(path: &Path) -> Result<(u32, u32), String> {
+    let file = File::open(path).map_err(|error| error.to_string())?;
+    let mut decoder = JpegDecoder::new(BufReader::new(file));
+    decoder.read_info().map_err(|error| error.to_string())?;
+    let info = decoder
+        .info()
+        .ok_or_else(|| "JPEG metadata is unavailable".to_owned())?;
+    Ok((u32::from(info.width), u32::from(info.height)))
 }
 
 fn decode_scaled_jpeg(
@@ -249,23 +270,6 @@ fn decode_scaled_jpeg(
         .info()
         .ok_or_else(|| "JPEG metadata is unavailable".to_owned())?;
 
-    if source_info.coding_process == CodingProcess::DctProgressive {
-        let estimated = progressive_coefficient_bytes(
-            original.0,
-            original.1,
-            jpeg_component_count(source_info.pixel_format),
-        );
-        if estimated > PROGRESSIVE_JPEG_LIMIT_BYTES {
-            return Err(format!(
-                "progressive JPEG {}x{} requires an estimated {} coefficient buffer, above the {} safeguard",
-                original.0,
-                original.1,
-                format_mebibytes(estimated),
-                format_mebibytes(PROGRESSIVE_JPEG_LIMIT_BYTES)
-            ));
-        }
-    }
-
     let requested_width = target.0.saturating_mul(2).min(original.0).max(target.0) as u16;
     let requested_height = target.1.saturating_mul(2).min(original.1).max(target.1) as u16;
     let (scaled_width, scaled_height) = decoder
@@ -279,30 +283,21 @@ fn decode_scaled_jpeg(
         ));
     }
 
-    let decoded_bytes = u64::from(scaled.0)
-        .saturating_mul(u64::from(scaled.1))
-        .saturating_mul(source_info.pixel_format.pixel_bytes() as u64);
-    if decoded_bytes > JPEG_DECODE_BUFFER_LIMIT_BYTES as u64 {
-        return Err(format!(
-            "JPEG {}x{} would use {} for its reduced {}x{} decode, above the {} safeguard",
-            original.0,
-            original.1,
-            format_mebibytes(decoded_bytes),
-            scaled.0,
-            scaled.1,
-            format_mebibytes(JPEG_DECODE_BUFFER_LIMIT_BYTES as u64)
-        ));
-    }
-
-    decoder.set_max_decoding_buffer_size(JPEG_DECODE_BUFFER_LIMIT_BYTES);
+    let allocation = jpeg_allocation_plan(
+        original,
+        scaled,
+        source_info.pixel_format,
+        source_info.coding_process,
+    )?;
+    decoder.set_max_decoding_buffer_size(allocation.decoder_output_limit);
     let pixels = decoder.decode().map_err(|error| {
         format!(
-            "JPEG {}x{} reduced decode to {}x{} failed (estimated {}): {error}",
+            "JPEG {}x{} reduced decode to {}x{} failed (estimated aggregate allocation {}): {error}",
             original.0,
             original.1,
             scaled.0,
             scaled.1,
-            format_mebibytes(decoded_bytes)
+            format_mebibytes(allocation.total_bytes)
         )
     })?;
     let decoded_info = decoder
@@ -316,25 +311,72 @@ fn decode_scaled_jpeg(
     )
 }
 
-fn decode_png(path: &Path, dimensions: (u32, u32)) -> Result<DynamicImage, String> {
-    let mut reader = ImageReader::open(path).map_err(|error| error.to_string())?;
-    reader.set_format(ImageFormat::Png);
-    reader.decode().map_err(|error| {
-        if matches!(error, ImageError::Limits(_)) {
-            let estimate = u64::from(dimensions.0)
-                .saturating_mul(u64::from(dimensions.1))
-                .saturating_mul(4);
-            format!(
-                "PNG {}x{} exceeded the {} decode safeguard (RGBA output alone is approximately {}; decoder working memory may be higher); larger PNG files require tiled processing",
-                dimensions.0,
-                dimensions.1,
-                format_mebibytes(PNG_DECODE_LIMIT_BYTES),
-                format_mebibytes(estimate)
-            )
-        } else {
-            error.to_string()
-        }
+fn inspect_png(path: &Path) -> Result<PngDecodePlan, String> {
+    let decoder = open_png_decoder(path, IMAGE_DECODE_ALLOCATION_LIMIT_BYTES)
+        .map_err(|error| format_png_error(error, None))?;
+    let dimensions = decoder.dimensions();
+    let output_bytes = decoder.total_bytes();
+    let inner_allocation_budget = png_inner_allocation_budget(output_bytes)?;
+    Ok(PngDecodePlan {
+        dimensions,
+        output_bytes,
+        inner_allocation_budget,
     })
+}
+
+fn decode_png(path: &Path, plan: &PngDecodePlan) -> Result<DynamicImage, String> {
+    let decoder = open_png_decoder(path, plan.inner_allocation_budget)
+        .map_err(|error| format_png_error(error, Some(plan)))?;
+    if decoder.dimensions() != plan.dimensions || decoder.total_bytes() != plan.output_bytes {
+        return Err("PNG changed while it was being inspected for safe decoding".to_owned());
+    }
+    DynamicImage::from_decoder(decoder).map_err(|error| format_png_error(error, Some(plan)))
+}
+
+fn open_png_decoder(
+    path: &Path,
+    max_alloc: u64,
+) -> Result<PngDecoder<BufReader<File>>, ImageError> {
+    let file = File::open(path).map_err(ImageError::IoError)?;
+    PngDecoder::with_limits(BufReader::new(file), image_decode_limits(max_alloc))
+}
+
+fn png_inner_allocation_budget(output_bytes: u64) -> Result<u64, String> {
+    IMAGE_DECODE_ALLOCATION_LIMIT_BYTES
+        .checked_sub(output_bytes)
+        .ok_or_else(|| {
+            format!(
+                "PNG output requires {}, above the {} aggregate decode allocation budget",
+                format_mebibytes(output_bytes),
+                format_mebibytes(IMAGE_DECODE_ALLOCATION_LIMIT_BYTES)
+            )
+        })
+}
+
+fn format_png_error(error: ImageError, plan: Option<&PngDecodePlan>) -> String {
+    if matches!(error, ImageError::Limits(_)) {
+        if let Some(plan) = plan {
+            return format!(
+                "PNG {}x{} exceeded the {} aggregate decode allocation budget ({} output plus at most {} decoder working memory)",
+                plan.dimensions.0,
+                plan.dimensions.1,
+                format_mebibytes(IMAGE_DECODE_ALLOCATION_LIMIT_BYTES),
+                format_mebibytes(plan.output_bytes),
+                format_mebibytes(plan.inner_allocation_budget)
+            );
+        }
+        return format!(
+            "PNG inspection exceeded the {} aggregate decode allocation budget",
+            format_mebibytes(IMAGE_DECODE_ALLOCATION_LIMIT_BYTES)
+        );
+    }
+    error.to_string()
+}
+
+fn image_decode_limits(max_alloc: u64) -> Limits {
+    let mut limits = Limits::default();
+    limits.max_alloc = Some(max_alloc);
+    limits
 }
 
 fn dynamic_image_from_jpeg(
@@ -383,9 +425,98 @@ fn dynamic_image_from_jpeg(
     }
 }
 
+fn jpeg_allocation_plan(
+    original: (u32, u32),
+    scaled: (u32, u32),
+    pixel_format: JpegPixelFormat,
+    coding_process: CodingProcess,
+) -> Result<JpegAllocationPlan, String> {
+    let scaled_pixels = u64::from(scaled.0).saturating_mul(u64::from(scaled.1));
+    let decoded_bytes = scaled_pixels.saturating_mul(pixel_format.pixel_bytes() as u64);
+    let conversion_bytes = match pixel_format {
+        JpegPixelFormat::L16 => decoded_bytes,
+        JpegPixelFormat::CMYK32 => scaled_pixels.saturating_mul(3),
+        JpegPixelFormat::L8 | JpegPixelFormat::RGB24 => 0,
+    };
+    let coefficient_bytes = if coding_process == CodingProcess::DctProgressive {
+        progressive_coefficient_bytes(original.0, original.1, jpeg_component_count(pixel_format))
+    } else {
+        0
+    };
+    // The rayon worker can queue copied progressive coefficient rows while the
+    // decoder retains the full coefficient planes. One additional full copy is
+    // a conservative bound for those simultaneous row tasks.
+    let coefficient_work_bytes = coefficient_bytes;
+    let component_plane_bytes = padded_component_plane_bytes(
+        scaled.0,
+        scaled.1,
+        jpeg_component_count(pixel_format),
+        if pixel_format == JpegPixelFormat::L16 {
+            2
+        } else {
+            1
+        },
+    );
+    let total_bytes = coefficient_bytes
+        .saturating_add(coefficient_work_bytes)
+        .saturating_add(component_plane_bytes)
+        .saturating_add(decoded_bytes)
+        .saturating_add(conversion_bytes);
+    if total_bytes > IMAGE_DECODE_ALLOCATION_LIMIT_BYTES {
+        return Err(format!(
+            "JPEG {}x{} reduced decode to {}x{} requires an estimated aggregate allocation of {} ({} coefficients + {} coefficient work + {} component planes + {} decoded output + {} conversion), above the {} budget",
+            original.0,
+            original.1,
+            scaled.0,
+            scaled.1,
+            format_mebibytes(total_bytes),
+            format_mebibytes(coefficient_bytes),
+            format_mebibytes(coefficient_work_bytes),
+            format_mebibytes(component_plane_bytes),
+            format_mebibytes(decoded_bytes),
+            format_mebibytes(conversion_bytes),
+            format_mebibytes(IMAGE_DECODE_ALLOCATION_LIMIT_BYTES)
+        ));
+    }
+
+    let decoder_output_limit = IMAGE_DECODE_ALLOCATION_LIMIT_BYTES
+        .saturating_sub(coefficient_bytes)
+        .saturating_sub(coefficient_work_bytes)
+        .saturating_sub(component_plane_bytes)
+        .saturating_sub(conversion_bytes)
+        .try_into()
+        .map_err(|_| "JPEG decoder allocation budget does not fit this platform".to_owned())?;
+    Ok(JpegAllocationPlan {
+        coefficient_bytes,
+        coefficient_work_bytes,
+        component_plane_bytes,
+        decoded_bytes,
+        conversion_bytes,
+        total_bytes,
+        decoder_output_limit,
+    })
+}
+
+fn padded_component_plane_bytes(
+    width: u32,
+    height: u32,
+    components: u64,
+    bytes_per_sample: u64,
+) -> u64 {
+    // jpeg-decoder keeps one reduced IDCT plane per component while allocating
+    // the interleaved output. Conservatively allow one maximum 32-sample MCU of
+    // padding on each axis for supported sampling layouts.
+    u64::from(width)
+        .saturating_add(31)
+        .saturating_mul(u64::from(height).saturating_add(31))
+        .saturating_mul(components)
+        .saturating_mul(bytes_per_sample)
+}
+
 fn progressive_coefficient_bytes(width: u32, height: u32, components: u64) -> u64 {
-    let blocks_wide = u64::from(width).div_ceil(8);
-    let blocks_high = u64::from(height).div_ceil(8);
+    // Conservatively include the maximum 32-sample MCU padding on both axes.
+    let blocks_wide = u64::from(width).saturating_add(31).div_ceil(8);
+    let blocks_high = u64::from(height).saturating_add(31).div_ceil(8);
     blocks_wide
         .saturating_mul(blocks_high)
         .saturating_mul(64)
@@ -477,12 +608,85 @@ mod tests {
     }
 
     #[test]
-    fn progressive_memory_estimate_accounts_for_full_coefficient_planes() {
+    fn jpeg_budget_aggregates_progressive_coefficients_output_and_conversion() {
         assert_eq!(
             progressive_coefficient_bytes(21_024, 14_882, 3),
-            1_878_031_872
+            1_884_933_120
         );
-        assert!(progressive_coefficient_bytes(21_024, 14_882, 3) > PROGRESSIVE_JPEG_LIMIT_BYTES);
+
+        let progressive = jpeg_allocation_plan(
+            (8_000, 8_000),
+            (2_000, 2_000),
+            JpegPixelFormat::RGB24,
+            CodingProcess::DctProgressive,
+        )
+        .unwrap();
+        assert_eq!(progressive.coefficient_bytes, 387_078_144);
+        assert_eq!(progressive.coefficient_work_bytes, 387_078_144);
+        assert_eq!(progressive.component_plane_bytes, 12_374_883);
+        assert_eq!(progressive.decoded_bytes, 12_000_000);
+        assert_eq!(progressive.conversion_bytes, 0);
+        assert_eq!(progressive.total_bytes, 798_531_171);
+        assert_eq!(
+            progressive.decoder_output_limit as u64,
+            IMAGE_DECODE_ALLOCATION_LIMIT_BYTES
+                - progressive.coefficient_bytes
+                - progressive.coefficient_work_bytes
+                - progressive.component_plane_bytes
+        );
+
+        let cmyk = jpeg_allocation_plan(
+            (4_000, 2_000),
+            (2_000, 1_000),
+            JpegPixelFormat::CMYK32,
+            CodingProcess::DctSequential,
+        )
+        .unwrap();
+        assert_eq!(cmyk.coefficient_work_bytes, 0);
+        assert_eq!(cmyk.component_plane_bytes, 8_375_844);
+        assert_eq!(cmyk.decoded_bytes, 8_000_000);
+        assert_eq!(cmyk.conversion_bytes, 6_000_000);
+        assert_eq!(cmyk.total_bytes, 22_375_844);
+        assert_eq!(
+            cmyk.decoder_output_limit as u64,
+            IMAGE_DECODE_ALLOCATION_LIMIT_BYTES
+                - cmyk.component_plane_bytes
+                - cmyk.conversion_bytes
+        );
+
+        let l16 = jpeg_allocation_plan(
+            (2_000, 1_000),
+            (1_000, 500),
+            JpegPixelFormat::L16,
+            CodingProcess::DctSequential,
+        )
+        .unwrap();
+        assert_eq!(l16.component_plane_bytes, 1_094_922);
+        assert_eq!(l16.decoded_bytes, 1_000_000);
+        assert_eq!(l16.conversion_bytes, 1_000_000);
+        assert_eq!(l16.total_bytes, 3_094_922);
+
+        let error = jpeg_allocation_plan(
+            (21_024, 14_882),
+            (3_052, 2_160),
+            JpegPixelFormat::RGB24,
+            CodingProcess::DctProgressive,
+        )
+        .unwrap_err();
+        assert!(error.contains("estimated aggregate allocation"));
+    }
+
+    #[test]
+    fn png_output_and_inner_decoder_share_the_1800_mib_budget() {
+        assert_eq!(IMAGE_DECODE_ALLOCATION_LIMIT_BYTES, 1_800 * 1024 * 1024);
+        let output_bytes = 1_600 * 1024 * 1024;
+        let inner_budget = png_inner_allocation_budget(output_bytes).unwrap();
+        assert_eq!(inner_budget, 200 * 1024 * 1024);
+        assert_eq!(
+            image_decode_limits(inner_budget).max_alloc,
+            Some(inner_budget)
+        );
+        assert!(png_inner_allocation_budget(IMAGE_DECODE_ALLOCATION_LIMIT_BYTES + 1).is_err());
     }
 
     #[test]

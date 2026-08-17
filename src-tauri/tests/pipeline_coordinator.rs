@@ -3,6 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use horizon_traversal_lib::pipeline::asset_log::{
+    AssetFailure, AssetFailureCategory, AssetFailureLog, AssetFailureOperation, ASSET_LOG_NAME,
+};
 use horizon_traversal_lib::pipeline::coordinator::{run_pipeline, PipelineEventSink, PipelinePlan};
 use horizon_traversal_lib::pipeline::ipc::{
     LogLevel, PipelineEvent, PipelineStage, PipelineSummary, ProcessingOptions, RunStatus,
@@ -720,4 +723,171 @@ fn aggregate_directory_collision_is_preserved_and_marks_the_run_partial() {
             ..
         } if message.contains("Aggregate report creation failed")
     )));
+}
+
+#[test]
+fn replaces_a_stale_asset_failure_log_with_an_empty_current_run_log() {
+    let temp = tempdir().unwrap();
+    let input = temp.path().join("input");
+    let output = temp.path().join("output");
+    fs::create_dir_all(&input).unwrap();
+    fs::create_dir_all(&output).unwrap();
+    let stale = AssetFailureLog {
+        schema_version: 1,
+        failures: vec![AssetFailure::new(
+            AssetFailureOperation::ImageResize,
+            "P0 Stale",
+            AssetFailureCategory::Deliverables,
+            &output.join("P0 Stale/Deliverables/stale.png"),
+            "previous run",
+        )],
+    };
+    fs::write(output.join(ASSET_LOG_NAME), stale.render().unwrap()).unwrap();
+
+    run_pipeline(
+        plan(input, output.clone(), Vec::new()),
+        None,
+        &UnexpectedMediaTools,
+        &RecordingEvents::default(),
+    );
+
+    let log: AssetFailureLog =
+        serde_json::from_slice(&fs::read(output.join(ASSET_LOG_NAME)).unwrap()).unwrap();
+    assert_eq!(log.schema_version, 1);
+    assert!(log.failures.is_empty());
+}
+
+#[test]
+fn unreplaceable_asset_log_aborts_before_any_ticket_output_is_replaced() {
+    let temp = tempdir().unwrap();
+    let input = temp.path().join("input");
+    let output = temp.path().join("output");
+    let ticket = input.join("P1 Ready");
+    write(&ticket.join("Deliverables/Artwork/new.gif"), b"new");
+    write(&output.join("P1 Ready/existing.gif"), b"keep");
+    write(&output.join(ASSET_LOG_NAME).join("sentinel"), b"keep");
+    let events = RecordingEvents::default();
+
+    let summary = run_pipeline(
+        plan(input, output.clone(), vec![ticket]),
+        None,
+        &UnexpectedMediaTools,
+        &events,
+    );
+
+    assert_eq!(summary.status, RunStatus::Failed);
+    assert_eq!(summary.failed_tickets, 1);
+    assert_eq!(summary.copied_files, 0);
+    assert_eq!(summary.errors, 1);
+    assert_eq!(
+        fs::read(output.join("P1 Ready/existing.gif")).unwrap(),
+        b"keep"
+    );
+    assert!(!output.join("P1 Ready/Deliverables/new.gif").exists());
+    assert_eq!(
+        fs::read(output.join(ASSET_LOG_NAME).join("sentinel")).unwrap(),
+        b"keep"
+    );
+    assert_eq!(
+        fs::read_to_string(output.join("1. report.csv")).unwrap(),
+        "Name,Ticket,Folder,Size\n"
+    );
+    assert!(!events
+        .snapshot()
+        .iter()
+        .any(|event| matches!(event, PipelineEvent::TicketStarted { .. })));
+    assert!(events.snapshot().iter().any(|event| matches!(
+        event,
+        PipelineEvent::Log {
+            ticket: None,
+            level: LogLevel::Error,
+            message,
+            ..
+        } if message.contains("pipeline aborted before processing")
+    )));
+}
+
+#[test]
+fn asset_failure_log_contains_only_typed_file_processing_failures_in_stage_order() {
+    let temp = tempdir().unwrap();
+    let input = temp.path().join("input");
+    let output = temp.path().join("output");
+    let ticket = input.join("P1 Broken Media");
+    write(
+        &ticket.join("Master Files/Artwork/broken-master.jpg"),
+        b"not a JPEG",
+    );
+    write(
+        &ticket.join("Deliverables/Documents/broken.pdf"),
+        b"not a PDF",
+    );
+    write(
+        &ticket.join("Deliverables/Digital/broken-deliverable.png"),
+        b"not a PNG",
+    );
+    write(&ticket.join("Deliverables/Video/broken.mp4"), b"not an MP4");
+
+    let summary = run(
+        plan(input, output.clone(), vec![ticket]),
+        &RecordingEvents::default(),
+    );
+    let log: AssetFailureLog =
+        serde_json::from_slice(&fs::read(output.join(ASSET_LOG_NAME)).unwrap()).unwrap();
+
+    assert_eq!(summary.failed_files, 4);
+    assert_eq!(log.schema_version, 1);
+    assert_eq!(log.failures.len(), 4);
+    let expected = [
+        (
+            AssetFailureOperation::PdfToImage,
+            AssetFailureCategory::Deliverables,
+            output
+                .join("P1 Broken Media/Deliverables/broken.pdf")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        (
+            AssetFailureOperation::ImageResize,
+            AssetFailureCategory::Master,
+            output
+                .join("P1 Broken Media/Master/broken-master.jpg")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        (
+            AssetFailureOperation::ImageResize,
+            AssetFailureCategory::Deliverables,
+            output
+                .join("P1 Broken Media/Deliverables/broken-deliverable.png")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        (
+            AssetFailureOperation::VideoResize,
+            AssetFailureCategory::Deliverables,
+            output
+                .join("P1 Broken Media/Deliverables/broken.mp4")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    ];
+    assert_eq!(
+        log.failures
+            .iter()
+            .map(|failure| (failure.operation, failure.category, failure.path.clone()))
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert!(log
+        .failures
+        .iter()
+        .all(|failure| failure.ticket == "P1 Broken Media" && !failure.message.is_empty()));
+
+    let value: serde_json::Value =
+        serde_json::from_slice(&fs::read(output.join(ASSET_LOG_NAME)).unwrap()).unwrap();
+    assert!(value["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|failure| failure.as_object().unwrap().len() == 5));
 }
