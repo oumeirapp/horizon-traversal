@@ -952,7 +952,10 @@ fn validate_generated_file(path: &Path, label: &str) -> Result<(), AppError> {
             format!("The {label} is not a non-empty regular file."),
         ));
     }
-    File::open(path)
+    File::options()
+        .read(true)
+        .write(true)
+        .open(path)
         .and_then(|file| file.sync_all())
         .map_err(|error| AppError::new("powerPointOutputInvalid", error.to_string()))
 }
@@ -1136,6 +1139,21 @@ mod tests {
         fn remove_file(&self, path: &Path) -> io::Result<()> {
             fs::remove_file(path)
         }
+    }
+
+    #[test]
+    fn generated_file_validation_accepts_non_empty_regular_files() {
+        let temp = tempdir().unwrap();
+        let deck = temp.path().join("generated.pptx");
+        let report = temp.path().join("layout-report.json");
+        fs::write(&deck, b"pptx bytes").unwrap();
+        fs::write(&report, b"{}\n").unwrap();
+
+        validate_generated_file(&deck, "generated PowerPoint").unwrap();
+        validate_generated_file(&report, "layout report").unwrap();
+
+        assert_eq!(fs::read(deck).unwrap(), b"pptx bytes");
+        assert_eq!(fs::read(report).unwrap(), b"{}\n");
     }
 
     #[test]
