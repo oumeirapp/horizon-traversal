@@ -842,7 +842,9 @@ fn asset_failure_log_contains_only_typed_file_processing_failures_in_stage_order
             AssetFailureOperation::PdfToImage,
             AssetFailureCategory::Deliverables,
             output
-                .join("P1 Broken Media/Deliverables/broken.pdf")
+                .join("P1 Broken Media")
+                .join("Deliverables")
+                .join("broken.pdf")
                 .to_string_lossy()
                 .into_owned(),
         ),
@@ -850,7 +852,9 @@ fn asset_failure_log_contains_only_typed_file_processing_failures_in_stage_order
             AssetFailureOperation::ImageResize,
             AssetFailureCategory::Master,
             output
-                .join("P1 Broken Media/Master/broken-master.jpg")
+                .join("P1 Broken Media")
+                .join("Master")
+                .join("broken-master.jpg")
                 .to_string_lossy()
                 .into_owned(),
         ),
@@ -858,7 +862,9 @@ fn asset_failure_log_contains_only_typed_file_processing_failures_in_stage_order
             AssetFailureOperation::ImageResize,
             AssetFailureCategory::Deliverables,
             output
-                .join("P1 Broken Media/Deliverables/broken-deliverable.png")
+                .join("P1 Broken Media")
+                .join("Deliverables")
+                .join("broken-deliverable.png")
                 .to_string_lossy()
                 .into_owned(),
         ),
@@ -866,7 +872,9 @@ fn asset_failure_log_contains_only_typed_file_processing_failures_in_stage_order
             AssetFailureOperation::VideoResize,
             AssetFailureCategory::Deliverables,
             output
-                .join("P1 Broken Media/Deliverables/broken.mp4")
+                .join("P1 Broken Media")
+                .join("Deliverables")
+                .join("broken.mp4")
                 .to_string_lossy()
                 .into_owned(),
         ),
