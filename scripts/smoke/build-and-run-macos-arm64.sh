@@ -156,8 +156,7 @@ printf '%s\n' \
   'Name,Ticket,Folder,Size' \
   'Brief.pdf,P1,Creative,Unknown' \
   'Clip.mp4,P1,Creative,0.2 sec 1080x1920' \
-  'Visual.png,P1,Creative,2400x1500' \
-  'MasterBrief.pdf,P1,Print,Unknown' > "$EXPECTED_REPORT"
+  'Visual.png,P1,Creative,2400x1500' > "$EXPECTED_REPORT"
 cmp -s "$EXPECTED_REPORT" "$REPORT" ||
   fail "ticket CSV does not match the exact Name-first header and filename-ordered rows"
 cmp -s "$EXPECTED_REPORT" "$AGGREGATE_REPORT" ||

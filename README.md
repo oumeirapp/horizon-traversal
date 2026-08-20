@@ -88,12 +88,17 @@ the aggregate `1. report.csv`, with that header once followed by all
 ticket-report rows from the current run in ticket-processing order. This
 aggregate is always written and is header-only when no ticket contributes a
 row, including when tickets have no discovered source. The per-ticket
-`report.csv` files remain available alongside their collected assets. `Name`
-is the source basename with its original extension. Its full parsed size span
-is removed from the stem, adjacent hyphens, underscores, and whitespace are
-trimmed, and two retained sides are joined with one hyphen. Other case, spaces,
-and punctuation are preserved. If removal would empty the stem, the original
-basename is kept.
+`report.csv` files remain available alongside their collected assets. Report
+rows come only from copied `Deliverables` assets; copied `Master` assets never
+contribute rows. The report layer independently selects the highest numbered
+sibling version folder for each source root and parent, preserves ordinary
+siblings and input order, and stops comparing versions below a selected
+version folder. Version-like filename text does not participate in selection.
+`Name` is the source basename with its original extension. Its full parsed size
+span is removed from the stem, adjacent hyphens, underscores, and whitespace
+are trimmed, and two retained sides are joined with one hyphen. Other case,
+spaces, and punctuation are preserved. If removal would empty the stem, the
+original basename is kept.
 When normalized variants are grouped, the first representative provides the
 displayed name. `Folder` is the asset's immediate child folder below its source
 root. `Size` canonicalizes supported filename metadata: durations use

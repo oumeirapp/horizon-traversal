@@ -85,7 +85,7 @@ test("package smokes verify exact per-ticket and aggregate CSV content", () => {
     assert.match(smoke, /Brief\.pdf,P1,Creative,Unknown/);
     assert.match(smoke, /Clip\.mp4,P1,Creative,0\.2 sec 1080x1920["']/);
     assert.match(smoke, /Visual\.png,P1,Creative,2400x1500["']/);
-    assert.match(smoke, /MasterBrief\.pdf,P1,Print,Unknown["']/);
+    assert.doesNotMatch(smoke, /MasterBrief\.pdf,P1,Print,Unknown["']/);
     assert.doesNotMatch(smoke, /["']Ticket,Folder,Size["']/);
     assert.doesNotMatch(smoke, /report\.txt/);
     assert.doesNotMatch(smoke, /ticket report is missing source path/);

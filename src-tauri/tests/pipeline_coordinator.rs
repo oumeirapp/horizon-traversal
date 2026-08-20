@@ -297,7 +297,14 @@ fn categories_have_independent_flat_collision_names() {
         b"deliverables second"
     );
     assert!(!output.join("P1 Categories/shared.gif").exists());
-    assert!(output.join("P1 Categories/report.csv").is_file());
+    assert_eq!(
+        fs::read_to_string(output.join("P1 Categories/report.csv")).unwrap(),
+        concat!(
+            "Name,Ticket,Folder,Size\n",
+            "shared.gif,P1,A,Unknown\n",
+            "shared.gif,P1,B,Unknown\n",
+        )
+    );
 }
 
 #[test]
@@ -431,15 +438,11 @@ fn multi_ticket_run_orders_events_and_keeps_reports_ticket_local() {
     );
     assert_eq!(
         fs::read_to_string(output.join("P2 Second/report.csv")).unwrap(),
-        "Name,Ticket,Folder,Size\nsecond.gif,P2,Print,Unknown\n"
+        "Name,Ticket,Folder,Size\n"
     );
     assert_eq!(
         fs::read_to_string(output.join("1. report.csv")).unwrap(),
-        concat!(
-            "Name,Ticket,Folder,Size\n",
-            "first.gif,P1,nested,210x297\n",
-            "second.gif,P2,Print,Unknown\n",
-        )
+        "Name,Ticket,Folder,Size\nfirst.gif,P1,nested,210x297\n"
     );
 
     let completed_summary = recorded

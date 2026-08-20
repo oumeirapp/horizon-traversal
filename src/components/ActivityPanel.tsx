@@ -6,6 +6,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
+import { Check, Info, Logs, Search, TriangleAlert, X } from "lucide-react";
 import type { RunLogEntry } from "../lib/run-state";
 
 type LogTab = "activity" | "warning" | "error";
@@ -32,17 +33,15 @@ function matchesTab(entry: RunLogEntry, tab: LogTab) {
 function LogLevelMark({ level }: { level: RunLogEntry["level"] }) {
   return (
     <span className={`log-level log-level--${level}`} aria-label={level}>
-      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-        {level === "success" ? (
-          <path d="m3 8 3 3 7-7" />
-        ) : level === "warning" ? (
-          <><path d="M8 3v6" /><path d="M8 12h.01" /></>
-        ) : level === "error" ? (
-          <><path d="m4 4 8 8" /><path d="m12 4-8 8" /></>
-        ) : (
-          <circle cx="8" cy="8" r="1" />
-        )}
-      </svg>
+      {level === "success" ? (
+        <Check size={12} aria-hidden="true" />
+      ) : level === "warning" ? (
+        <TriangleAlert size={12} aria-hidden="true" />
+      ) : level === "error" ? (
+        <X size={12} aria-hidden="true" />
+      ) : (
+        <Info size={12} aria-hidden="true" />
+      )}
     </span>
   );
 }
@@ -126,10 +125,7 @@ function ActivityPanelComponent({
         <div className="activity-panel__tools">
           <label className="log-search">
             <span className="sr-only">Search run activity</span>
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <circle cx="11" cy="11" r="6.5" />
-              <path d="m16 16 4 4" />
-            </svg>
+            <Search size={16} aria-hidden="true" />
             <input
               type="search"
               value={query}
@@ -177,9 +173,7 @@ function ActivityPanelComponent({
       >
         {groups.length === 0 ? (
           <div className="log-empty">
-            <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
-              <path d="M5 10h22M5 16h14M5 22h18" />
-            </svg>
+            <Logs size={28} aria-hidden="true" />
             <p>
               {logs.length === 0
                 ? emptyMessage

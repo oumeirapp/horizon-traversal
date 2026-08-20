@@ -449,8 +449,7 @@ try {
     "Name,Ticket,Folder,Size",
     "Brief.pdf,P1,Creative,Unknown",
     "Clip.mp4,P1,Creative,0.2 sec 1080x1920",
-    "Visual.png,P1,Creative,2400x1500",
-    "MasterBrief.pdf,P1,Print,Unknown"
+    "Visual.png,P1,Creative,2400x1500"
   ) -join "`n"
   $ExpectedReport += "`n"
   $ActualReport = [IO.File]::ReadAllText($Report).Replace("`r`n", "`n")

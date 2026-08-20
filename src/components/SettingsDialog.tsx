@@ -1,4 +1,5 @@
 import { open as openDirectory } from "@tauri-apps/plugin-dialog";
+import { Folder, X } from "lucide-react";
 import {
   useEffect,
   useId,
@@ -34,22 +35,6 @@ function nativeErrorMessage(error: unknown) {
     return error.message;
   }
   return error instanceof Error ? error.message : String(error);
-}
-
-function FolderIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path d="M3.5 7.5v10.25A2.25 2.25 0 0 0 5.75 20h12.5a2.25 2.25 0 0 0 2.25-2.25V9.5a2 2 0 0 0-2-2h-6l-2-2h-5a2 2 0 0 0-2 2Z" />
-    </svg>
-  );
-}
-
-function CloseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path d="m6 6 12 12M18 6 6 18" />
-    </svg>
-  );
 }
 
 function SettingsDialogContent({
@@ -211,7 +196,7 @@ function SettingsDialogContent({
           disabled={busy}
           onClick={requestCancel}
         >
-          <CloseIcon />
+          <X size={18} aria-hidden="true" />
         </button>
       </div>
 
@@ -229,7 +214,7 @@ function SettingsDialogContent({
                   <span>Collected assets and reports</span>
                 </div>
                 <div className="path-control">
-                  <FolderIcon />
+                  <Folder size={18} aria-hidden="true" />
                   <input
                     ref={assetOutputRef}
                     id={assetOutputId}
@@ -281,7 +266,7 @@ function SettingsDialogContent({
                   <span>Future combined presentation</span>
                 </div>
                 <div className="path-control">
-                  <FolderIcon />
+                  <Folder size={18} aria-hidden="true" />
                   <input
                     id={powerpointOutputId}
                     value={draft.powerpointOutputPath}

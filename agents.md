@@ -65,6 +65,12 @@ cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-f
   current run in ticket-processing order. Always write it, using a header-only
   aggregate when no ticket contributes rows, including when tickets have no
   discovered source. Do not remove or rename the per-ticket `report.csv` files.
+- Build report rows only from copied `Deliverables` assets; copied `Master`
+  assets never contribute. In the report layer, independently select the
+  highest numbered sibling version folder per source root and parent, preserve
+  ordinary siblings and input order, and stop version comparisons after the
+  selected folder. Apply version matching to folder components only, never to
+  filenames.
 - Derive `Name` from the source basename: remove the full parsed size span from
   the stem, trim adjacent hyphens, underscores, and whitespace, join two
   retained sides with one hyphen, and append the original extension. Preserve

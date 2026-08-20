@@ -1,7 +1,11 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use regex::Regex;
+
+use super::discovery::deliverables_version_number;
+use super::types::SourceRootKind;
 
 const UNKNOWN_SIZE: &str = "Unknown";
 const REPORT_HEADER: &str = "Name,Ticket,Folder,Size\n";
@@ -10,6 +14,7 @@ const REPORT_HEADER: &str = "Name,Ticket,Folder,Size\n";
 pub struct ReportAsset {
     pub source_root: PathBuf,
     pub relative_source: PathBuf,
+    pub source_kind: SourceRootKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +39,21 @@ struct ReportGroup {
     name_key: String,
     name: String,
     sizes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VersionFolder {
+    parent: PathBuf,
+    name: OsString,
+    number: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SelectedVersion {
+    source_root: PathBuf,
+    parent: PathBuf,
+    name: OsString,
+    number: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,8 +86,15 @@ fn geometry_pattern() -> &'static Regex {
 pub(crate) fn build_ticket_report(ticket_folder: &str, assets: &[ReportAsset]) -> TicketReport {
     let ticket = ticket_identifier(ticket_folder);
     let mut groups: Vec<ReportGroup> = Vec::new();
+    let selected_versions = selected_versions(assets);
 
     for asset in assets {
+        if asset.source_kind != SourceRootKind::Deliverables
+            || !uses_selected_version(asset, &selected_versions)
+        {
+            continue;
+        }
+
         let Some((folder, project_key, file_name)) = report_location(&asset.relative_source) else {
             continue;
         };
@@ -102,6 +129,67 @@ pub(crate) fn build_ticket_report(ticket_folder: &str, assets: &[ReportAsset]) -
     }
 
     TicketReport { ticket, groups }
+}
+
+fn selected_versions(assets: &[ReportAsset]) -> Vec<SelectedVersion> {
+    let mut selected = Vec::<SelectedVersion>::new();
+
+    for asset in assets {
+        if asset.source_kind != SourceRootKind::Deliverables {
+            continue;
+        }
+        let Some(candidate) = first_version_folder(&asset.relative_source) else {
+            continue;
+        };
+
+        if let Some(current) = selected.iter_mut().find(|current| {
+            current.source_root == asset.source_root && current.parent == candidate.parent
+        }) {
+            if candidate.number > current.number
+                || (candidate.number == current.number && candidate.name > current.name)
+            {
+                current.name = candidate.name;
+                current.number = candidate.number;
+            }
+        } else {
+            selected.push(SelectedVersion {
+                source_root: asset.source_root.clone(),
+                parent: candidate.parent,
+                name: candidate.name,
+                number: candidate.number,
+            });
+        }
+    }
+
+    selected
+}
+
+fn uses_selected_version(asset: &ReportAsset, selected: &[SelectedVersion]) -> bool {
+    let Some(candidate) = first_version_folder(&asset.relative_source) else {
+        return true;
+    };
+
+    selected.iter().any(|selection| {
+        selection.source_root == asset.source_root
+            && selection.parent == candidate.parent
+            && selection.name == candidate.name
+    })
+}
+
+fn first_version_folder(relative_source: &Path) -> Option<VersionFolder> {
+    let mut parent = PathBuf::new();
+    for component in relative_source.parent()?.iter() {
+        let name = component.to_os_string();
+        if let Some(number) = deliverables_version_number(&component.to_string_lossy()) {
+            return Some(VersionFolder {
+                parent,
+                name,
+                number,
+            });
+        }
+        parent.push(component);
+    }
+    None
 }
 
 impl TicketReport {
@@ -373,7 +461,124 @@ mod tests {
         ReportAsset {
             source_root: PathBuf::from(root),
             relative_source: PathBuf::from(relative),
+            source_kind: SourceRootKind::Deliverables,
         }
+    }
+
+    fn master_asset(root: &str, relative: &str) -> ReportAsset {
+        ReportAsset {
+            source_root: PathBuf::from(root),
+            relative_source: PathBuf::from(relative),
+            source_kind: SourceRootKind::MasterFiles,
+        }
+    }
+
+    #[test]
+    fn excludes_master_assets_and_keeps_a_master_only_report_header_only() {
+        let report = render_ticket_report(
+            "P1 Campaign",
+            &[
+                master_asset("Master Files", "Print/Master_210x297.jpg"),
+                asset("Deliverables", "Print/Deliverable_300x400.jpg"),
+            ],
+        );
+
+        assert_eq!(
+            report,
+            "Name,Ticket,Folder,Size\nDeliverable.jpg,P1,Print,300x400\n"
+        );
+        assert_eq!(
+            render_ticket_report(
+                "P2 Master Only",
+                &[master_asset("Master Files", "Print/Master_210x297.jpg")],
+            ),
+            "Name,Ticket,Folder,Size\n"
+        );
+    }
+
+    #[test]
+    fn selects_versions_per_source_root_and_parent_without_reordering_assets() {
+        let report = render_ticket_report(
+            "P2 Versions",
+            &[
+                asset("source-a", "Video/Source Materials/First_210x297.jpg"),
+                asset("source-a", "Video/Ver1/OldVideo_1x1.jpg"),
+                asset("source-b", "Video/Ver1/SourceB_2x2.jpg"),
+                asset("source-a", "Print/version 4/LatestPrint_4x5.jpg"),
+                asset("source-a", "Video/Ver3/LatestVideo_9x16.jpg"),
+                asset("source-a", "Print/Working/Last_300x400.jpg"),
+                asset("source-a", "Print/v2/OldPrint_3x4.jpg"),
+            ],
+        );
+
+        assert_eq!(
+            report,
+            concat!(
+                "Name,Ticket,Folder,Size\n",
+                "First.jpg,P2,Video,210x297\n",
+                "SourceB.jpg,P2,Video,2x2\n",
+                "LatestPrint.jpg,P2,Print,4x5\n",
+                "LatestVideo.jpg,P2,Video,9x16\n",
+                "Last.jpg,P2,Print,300x400\n",
+            )
+        );
+    }
+
+    #[test]
+    fn ignores_nested_versions_after_the_selected_version_folder() {
+        let report = render_ticket_report(
+            "P3 Nested Versions",
+            &[
+                asset("Deliverables", "Video/Ver1/version 100/Old_1x1.jpg"),
+                asset("Deliverables", "Video/Ver2/version 99/NestedHigh_4x5.jpg"),
+                asset("Deliverables", "Video/Ver2/version 1/NestedLow_9x16.jpg"),
+            ],
+        );
+
+        assert_eq!(
+            report,
+            concat!(
+                "Name,Ticket,Folder,Size\n",
+                "NestedHigh.jpg,P3,Video,4x5\n",
+                "NestedLow.jpg,P3,Video,9x16\n",
+            )
+        );
+    }
+
+    #[test]
+    fn equal_version_numbers_use_the_existing_name_tiebreaker() {
+        let report = render_ticket_report(
+            "P4 Version Tie",
+            &[
+                asset("Deliverables", "Print/version 2 alpha/Alpha_210x297.jpg"),
+                asset("Deliverables", "Print/version 2 zulu/Zulu_300x400.jpg"),
+            ],
+        );
+
+        assert_eq!(
+            report,
+            "Name,Ticket,Folder,Size\nZulu.jpg,P4,Print,300x400\n"
+        );
+    }
+
+    #[test]
+    fn version_tokens_in_filenames_do_not_trigger_folder_selection() {
+        let report = render_ticket_report(
+            "P5 Filename Versions",
+            &[
+                asset("Deliverables", "Print/Poster_version 99_210x297.jpg"),
+                asset("Deliverables", "Print/Asset_v100.jpg"),
+            ],
+        );
+
+        assert_eq!(
+            report,
+            concat!(
+                "Name,Ticket,Folder,Size\n",
+                "Poster_version 99.jpg,P5,Print,210x297\n",
+                "Asset_v100.jpg,P5,Print,Unknown\n",
+            )
+        );
     }
 
     #[test]

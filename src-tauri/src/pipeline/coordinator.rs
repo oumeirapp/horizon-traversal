@@ -305,6 +305,7 @@ fn process_ticket(
                 report_assets.extend(outcome.copied.iter().map(|asset| ReportAsset {
                     source_root: source.path.clone(),
                     relative_source: asset.relative_source.clone(),
+                    source_kind: source.kind,
                 }));
                 absorb_collection(events, &ticket_name, &mut result, outcome);
             }

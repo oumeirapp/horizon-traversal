@@ -12,6 +12,15 @@ import {
 } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { open } from "@tauri-apps/plugin-dialog";
+import {
+  ArrowRight,
+  Check,
+  Folder,
+  RotateCcw,
+  Settings,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import { ActivityPanel } from "./components/ActivityPanel";
 import {
   SETTINGS_DIALOG_ID,
@@ -413,61 +422,6 @@ function useBatchedPowerPointEvents(
   return useMemo(() => ({ enqueue, flush }), [enqueue, flush]);
 }
 
-function FolderIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path d="M3.5 7.5v10.25A2.25 2.25 0 0 0 5.75 20h12.5a2.25 2.25 0 0 0 2.25-2.25V9.5a2 2 0 0 0-2-2h-6l-2-2h-5a2 2 0 0 0-2 2Z" />
-    </svg>
-  );
-}
-
-function ArrowIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path d="M5 12h14M14 7l5 5-5 5" />
-    </svg>
-  );
-}
-
-function ResetIcon() {
-  return (
-    <svg
-      className="lucide lucide-rotate-ccw"
-      viewBox="0 0 24 24"
-      width="20"
-      height="20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-      <path d="M3 3v5h5" />
-    </svg>
-  );
-}
-
-function SettingsIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="20"
-      height="20"
-      aria-hidden="true"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
-      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.42 1.42-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20h-2v-.08a1.7 1.7 0 0 0-1.1-1.57 1.7 1.7 0 0 0-1.88.34l-.06.06-1.42-1.42.06-.06A1.7 1.7 0 0 0 9.35 15a1.7 1.7 0 0 0-1.56-1.03H7v-2h.08a1.7 1.7 0 0 0 1.57-1.1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 1.42-1.42.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.56V6h2v.08a1.7 1.7 0 0 0 1.1 1.57 1.7 1.7 0 0 0 1.88-.34l.06-.06 1.42 1.42-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03H20v2h-.08A1.7 1.7 0 0 0 19.4 15Z" />
-    </svg>
-  );
-}
-
 function FieldIssue({ issue }: { issue: ValidationIssue | undefined }) {
   return issue === undefined ? null : (
     <p className="field-message field-message--error" role="alert">
@@ -566,9 +520,7 @@ function AssetRoute({
             <span className="asset-route__rail" aria-hidden="true" />
             <span className="asset-route__node" aria-hidden="true">
               {state === "complete" ? (
-                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-                  <path d="m3 8 3 3 7-7" />
-                </svg>
+                <Check size={12} aria-hidden="true" />
               ) : String(index + 1).padStart(2, "0")}
               {issueCount === 0 ? null : (
                 <span className="asset-route__issue-count">{issueCount}</span>
@@ -677,15 +629,13 @@ function RunResult({
   return (
     <section className={`run-result run-result--${phase}`} aria-labelledby="result-heading" tabIndex={-1}>
       <div className="run-result__mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="24" height="24">
-          {phase === "success" ? (
-            <path d="m5 12 4 4L19 6" />
-          ) : phase === "partialSuccess" ? (
-            <><path d="M12 7v6" /><path d="M12 17h.01" /></>
-          ) : (
-            <><path d="m7 7 10 10" /><path d="M17 7 7 17" /></>
-          )}
-        </svg>
+        {phase === "success" ? (
+          <Check size={24} aria-hidden="true" />
+        ) : phase === "partialSuccess" ? (
+          <TriangleAlert size={24} aria-hidden="true" />
+        ) : (
+          <X size={24} aria-hidden="true" />
+        )}
       </div>
       <div className="run-result__body">
         <h2 id="result-heading">{title}</h2>
@@ -702,11 +652,11 @@ function RunResult({
             onClick={onOpen}
             disabled={opening}
           >
-            <FolderIcon /> {opening ? "Opening…" : "Open output"}
+            <Folder size={18} aria-hidden="true" /> {opening ? "Opening…" : "Open output"}
           </button>
         )}
         <button type="button" className="run-result__reset" onClick={onReset}>
-          <ResetIcon />
+          <RotateCcw size={20} aria-hidden="true" />
           <span>Start another run</span>
         </button>
       </div>
@@ -766,16 +716,11 @@ function PowerPointResult({
       tabIndex={-1}
     >
       <div className="run-result__mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="24" height="24">
-          {generated ? (
-            <path d="m5 12 4 4L19 6" />
-          ) : (
-            <>
-              <path d="m7 7 10 10" />
-              <path d="M17 7 7 17" />
-            </>
-          )}
-        </svg>
+        {generated ? (
+          <Check size={24} aria-hidden="true" />
+        ) : (
+          <X size={24} aria-hidden="true" />
+        )}
       </div>
       <div className="run-result__body">
         <h2 id="powerpoint-result-heading">{title}</h2>
@@ -795,11 +740,11 @@ function PowerPointResult({
             onClick={onOpen}
             disabled={opening}
           >
-            <FolderIcon /> {opening ? "Opening…" : "Open presentation"}
+            <Folder size={18} aria-hidden="true" /> {opening ? "Opening…" : "Open presentation"}
           </button>
         ) : null}
         <button type="button" className="run-result__reset" onClick={onReset}>
-          <ResetIcon />
+          <RotateCcw size={20} aria-hidden="true" />
           <span>Start another presentation</span>
         </button>
       </div>
@@ -923,7 +868,7 @@ function PowerPointWorkspace({
                 inputIssue || selectionIssue ? " path-control--invalid" : ""
               }`}
             >
-              <FolderIcon />
+              <Folder size={18} aria-hidden="true" />
               <input
                 ref={inputRef}
                 id="powerpoint-input-path"
@@ -993,7 +938,7 @@ function PowerPointWorkspace({
                 disabled={!canStart}
               >
                 <span>Create PowerPoint</span>
-                <ArrowIcon />
+                <ArrowRight size={18} aria-hidden="true" />
               </button>
             )}
             {run.phase === "idle" && inputPath.trim() === "" ? (
@@ -1008,7 +953,7 @@ function PowerPointWorkspace({
                   className="button button--repeat start-row__repeat"
                   onClick={onReset}
                 >
-                  <ResetIcon />
+                  <RotateCcw size={20} aria-hidden="true" />
                   <span>Create another PowerPoint</span>
                 </button>
                 <p>Choose Create another PowerPoint to select a new source.</p>
@@ -1526,7 +1471,7 @@ function App() {
             aria-expanded={settingsOpen}
             aria-controls={settingsOpen ? SETTINGS_DIALOG_ID : undefined}
           >
-            <SettingsIcon />
+            <Settings size={20} strokeWidth={1.8} aria-hidden="true" />
           </button>
         </div>
         <p className="sr-only" aria-live="polite" aria-atomic="true">
@@ -1587,7 +1532,7 @@ function App() {
             <div className="field field--full">
               <label htmlFor="input-path">Input folder</label>
               <div className={`path-control${inputIssue ? " path-control--invalid" : ""}`}>
-                <FolderIcon />
+                <Folder size={18} aria-hidden="true" />
                 <input
                   ref={inputRef}
                   id="input-path"
@@ -1720,7 +1665,7 @@ function App() {
                 disabled={!canStart}
               >
                 <span>{running ? "Processing…" : "Start processing"}</span>
-                <ArrowIcon />
+                <ArrowRight size={18} aria-hidden="true" />
               </button>
               {run.phase === "idle" && inputPath.trim() === "" ? (
                 <p className="start-row__requirement" id="input-requirement">
@@ -1734,7 +1679,7 @@ function App() {
                     className="button button--repeat start-row__repeat"
                     onClick={handleNewRun}
                   >
-                    <ResetIcon />
+                    <RotateCcw size={20} aria-hidden="true" />
                     <span>Start another run</span>
                   </button>
                   <p>Choose Start another run to prepare another transfer.</p>
